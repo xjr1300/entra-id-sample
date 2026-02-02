@@ -1,0 +1,28 @@
+[package]
+name = "entra-id-backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+axum = "0.8.8"
+axum-extra = { version = "0.12.5", features = ["typed-header"] }
+base64 = "0.22.1"
+config = "0.15.19"
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+reqwest = { version = "0.13.1", features = ["form", "json"] }
+secrecy = { version = "0.10.3", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = [
+  "macros",
+  "rt-multi-thread",
+  "signal",
+] }
+tokio-util = "0.7.18"
+tracing = "0.1.44"
+tracing-bunyan-formatter = "0.3.10"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+url = { version = "2.5.8", features = ["serde"] }

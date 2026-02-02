@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>README.md</title>
+    <meta http-equiv="Content-type" content="text/html;charset=UTF-8" />
+    <script
+      type="text/javascript"
+      src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
+    ></script>
+    <script type="text/x-mathjax-config">
+      MathJax.Hub.Config({
+        tex2jax:{inlineMath: [['$', '$']]},
+        messageStyle: "none"
+      });
+    </script>
+    
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+ <script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+  </head>
+  <body>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme:
+          document.body.classList.contains("vscode-dark") ||
+          document.body.classList.contains("vscode-high-contrast")
+            ? "dark"
+            : "default",
+      });
+    </script>
+    <h1 id="entra-id-sso-%E3%83%95%E3%83%AD%E3%83%B3%E3%83%88%E3%82%A8%E3%83%B3%E3%83%89%E3%82%B5%E3%83%B3%E3%83%97%E3%83%AB">Entra ID SSO フロントエンドサンプル</h1>
+<p>本ドキュメントでは、Web アプリケーションフレームワークとして Vite + React を使用し、Microsoft Entra ID による SSO を実装する方法を示します。<br>
+Entra ID との連携には、MSAL（Microsoft Authentication Library）for React を使用します。</p>
+<p>すべてのコードは、<a href="https://github.com/xjr1300/entra-id-frontend">https://github.com/xjr1300/entra-id-frontend</a> で確認できます。</p>
+<p>最終的には何らかのバックエンド API サービスと連携することを想定していますが、本サンプルではフロントエンド側の実装にフォーカスします。<br>
+なお、バックエンドではフロントエンドから <code>Authorization</code> ヘッダーに含まれる Bearer トークン（アクセストークン）を検証し、適切にレスポンスを返します。<br>
+バックエンド側で認証機能の提供や、アクセストークンの管理・生成を行うことは想定していません。</p>
+<blockquote>
+<p>OpenID Connect（OIDC）や OAuth 2.0 の文脈では、Entra ID は ID プロバイダー（IdP）として機能し、アクセストークンの発行を担当します。<br>
+バックエンドは、アクセストークンを検証し、保護されたリソースを提供するリソースサーバーとして機能します。</p>
+</blockquote>
+<h2 id="entra-id-%E3%81%AE%E8%A8%AD%E5%AE%9A">Entra ID の設定</h2>
+<p>Entra ID の設定は、Microsoft Entra 管理センターで行います。</p>
+<h3 id="%E3%82%A2%E3%83%97%E3%83%AA%E3%82%B1%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%81%AE%E7%99%BB%E9%8C%B2">アプリケーションの登録</h3>
+<p>Microsoft Entra 管理センターのサイドバーから <code>[アプリの登録]</code> を選択し、<code>[新規登録]</code> を選択します。</p>
+<p>表示された画面で、以下の情報を入力して <code>[登録]</code> を選択します。</p>
+<ul>
+<li>名前: アプリケーションのユーザー向け表示名（後から変更可能）</li>
+<li>サポートされているアカウントの種類: <code>この組織ディレクトリのみに含まれるアカウント</code></li>
+<li>リダイレクト URI:（後で設定するためブランクのままにしておきます）</li>
+</ul>
+<h3 id="%E7%99%BB%E9%8C%B2%E3%81%97%E3%81%9F%E3%82%A2%E3%83%97%E3%83%AA%E3%82%B1%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%81%AE%E8%A8%AD%E5%AE%9A">登録したアプリケーションの設定</h3>
+<h4 id="%E3%82%AF%E3%83%A9%E3%82%A4%E3%82%A2%E3%83%B3%E3%83%88-id-%E3%81%A8%E3%83%86%E3%83%8A%E3%83%B3%E3%83%88-id-%E3%81%AE%E3%83%A1%E3%83%A2">クライアント ID とテナント ID のメモ</h4>
+<p>登録が完了すると、アプリケーションの概要ページが表示されます。<br>
+この概要ページで、以下の情報をメモしておきます。</p>
+<ul>
+<li>アプリケーション（クライアント）ID</li>
+<li>ディレクトリ（テナント）ID</li>
+</ul>
+<p>これらの情報は、後で SPA フロントエンドアプリケーションの設定で使用します。</p>
+<h4 id="%E3%83%AA%E3%83%80%E3%82%A4%E3%83%AC%E3%82%AF%E3%83%88uri%E3%81%AE%E8%A8%AD%E5%AE%9A">リダイレクトURIの設定</h4>
+<p>リダイレクト URI とは、認証が成功した後にユーザーがリダイレクトされる URI のことです。</p>
+<p>アプリケーションの管理ページのサイドバーで <code>[Authentication]</code> を選択します。<br>
+表示されたページで <code>[プラットフォームの追加]</code> を選択し、<code>[シングルページ アプリケーション (SPA)]</code> を選択します。</p>
+<p><code>[リダイレクト URI]</code> に以下の URI を入力し、<code>[構成]</code> を選択します。</p>
+<ul>
+<li><code>http://localhost:5173</code></li>
+</ul>
+<blockquote>
+<p>本サンプルは Entra ID SSO の実装例であるため、ローカルホストの URI を使用しています。<br>
+本番環境では、適切なドメイン名を設定してください。<br>
+また、本実装例では有効なリダイレクト URI は <code>http://localhost:5173</code> のみです。</p>
+</blockquote>
+<h4 id="api-%E3%81%AE%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9%E8%A8%B1%E5%8F%AF%E3%81%AE%E8%A8%AD%E5%AE%9A">API のアクセス許可の設定</h4>
+<p>アプリケーションの管理ページのサイドバーで <code>[API のアクセス許可]</code> を選択します。<br>
+表示されたページで <code>[アクセス許可の追加]</code> を選択します。</p>
+<p><code>Microsoft API</code> タブを選択し、<code>Microsoft Graph</code> を選択します。<br>
+<code>アプリケーションに必要なアクセス許可の種類</code> で <code>[委任されたアクセス許可]</code> を選択します。</p>
+<p><code>アクセス許可を選択する</code> に <code>User.Read</code> を入力し、表示された候補から <code>User &gt; User.Read</code> を選択します。<br>
+最後に <code>[アクセス許可の追加]</code> を選択して設定を保存します。</p>
+<blockquote>
+<p><code>User.Read</code> は、認証済みユーザー自身の基本的なプロファイル情報を読み取るためのアクセス許可です。<br>
+一部の属性は、<code>$select</code> クエリパラメーターを使用して明示的に指定しないと取得できない場合があります。</p>
+</blockquote>
+<h2 id="spa-%E3%83%95%E3%83%AD%E3%83%B3%E3%83%88%E3%82%A8%E3%83%B3%E3%83%89%E3%82%A2%E3%83%97%E3%83%AA%E3%82%B1%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%81%AE%E5%AE%9F%E8%A3%85">SPA フロントエンドアプリケーションの実装</h2>
+<h3 id="%E3%83%97%E3%83%AD%E3%82%B8%E3%82%A7%E3%82%AF%E3%83%88%E3%81%AE%E4%BD%9C%E6%88%90%E3%81%A8%E4%BE%9D%E5%AD%98%E3%83%91%E3%83%83%E3%82%B1%E3%83%BC%E3%82%B8%E3%81%AE%E3%82%A4%E3%83%B3%E3%82%B9%E3%83%88%E3%83%BC%E3%83%AB">プロジェクトの作成と依存パッケージのインストール</h3>
+<pre class="hljs"><code><div>npm create vite@latest
+<span class="hljs-built_in">cd</span> entra-id-frontend
+npm install @azure/msal-browser @azure/msal-react
+</div></code></pre>
+<h3 id="env%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB%E3%81%AE%E4%BD%9C%E6%88%90"><code>.env</code>ファイルの作成</h3>
+<p>プロジェクトルートに <code>.env</code> ファイルを作成し、以下の環境変数を設定します。</p>
+<pre class="hljs"><code><div>VITE_CLIENT_ID=&lt;上記でメモしたクライアントID&gt;
+VITE_TENANT_ID=&lt;上記でメモしたテナントID&gt;
+VITE_LOGIN_REDIRECT_URI=&lt;上記で設定したリダイレクトURI&gt;
+VITE_LOGOUT_REDIRECT_URI=&lt;上記で設定したリダイレクトURI&gt;
+
+# Microsoft Graph APIのエンドポイント
+VITE_GRAPH_ME_ENDPOINT=&quot;https://graph.microsoft.com/v1.0/me&quot;
+</div></code></pre>
+<blockquote>
+<p>実装例のため、ログアウト時のリダイレクト URI にログイン時のリダイレクト URI をそのまま使用しています。<br>
+必要に応じて、専用のログアウトリダイレクトURIを設定してください。</p>
+</blockquote>
+<h3 id="msal%E3%81%AE%E8%A8%AD%E5%AE%9A">MSALの設定</h3>
+<p><code>src/authConfig.ts</code>ファイルを作成して、MSALの設定を記述します。</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">import</span> { <span class="hljs-keyword">type</span> Configuration, <span class="hljs-keyword">type</span> PopupRequest } <span class="hljs-keyword">from</span> <span class="hljs-string">'@azure/msal-browser'</span>;
+
+<span class="hljs-comment">// MSALの設定</span>
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> authConfig: Configuration = {
+  auth: {
+    clientId: <span class="hljs-keyword">import</span>.meta.env.VITE_CLIENT_ID,
+    authority: <span class="hljs-string">`https://login.microsoftonline.com/<span class="hljs-subst">${<span class="hljs-keyword">import</span>.meta.env.VITE_TENANT_ID}</span>`</span>,
+    redirectUri: <span class="hljs-keyword">import</span>.meta.env.VITE_LOGIN_REDIRECT_URI,
+    postLogoutRedirectUri: <span class="hljs-keyword">import</span>.meta.env.VITE_LOGOUT_REDIRECT_URI,
+  },
+  cache: {
+    cacheLocation: <span class="hljs-string">'localStorage'</span>,
+  },
+};
+
+<span class="hljs-comment">// ログインリクエストのスコープ</span>
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> loginRequest: PopupRequest = {
+  scopes: [<span class="hljs-string">'User.Read'</span>],
+};
+</div></code></pre>
+<p><code>cache.cacheLocation</code> に <code>localStorage</code> を指定すると、複数タブやウィンドウ間でログイン状態を共有できます。<br>
+共有したくない場合は <code>sessionStorage</code> を指定します。</p>
+<h3 id="msal%E3%83%97%E3%83%AD%E3%83%90%E3%82%A4%E3%83%80%E3%83%BC%E3%81%AE%E8%BF%BD%E5%8A%A0">MSALプロバイダーの追加</h3>
+<p>MSALプロバイダー（<code>MsalProvider</code>）をアプリケーションのルートコンポーネントに追加します。<br>
+これにより、アプリケーション全体で MSAL の機能を利用できるようになります。</p>
+<ul>
+<li><code>src/main.tsx</code></li>
+</ul>
+<pre class="hljs"><code><div><span class="hljs-keyword">import</span> { StrictMode } <span class="hljs-keyword">from</span> <span class="hljs-string">'react'</span>;
+<span class="hljs-keyword">import</span> { createRoot } <span class="hljs-keyword">from</span> <span class="hljs-string">'react-dom/client'</span>;
+<span class="hljs-keyword">import</span> { PublicClientApplication } <span class="hljs-keyword">from</span> <span class="hljs-string">'@azure/msal-browser'</span>;
+<span class="hljs-keyword">import</span> { MsalProvider } <span class="hljs-keyword">from</span> <span class="hljs-string">'@azure/msal-react'</span>;
+<span class="hljs-keyword">import</span> { authConfig } <span class="hljs-keyword">from</span> <span class="hljs-string">'./authConfig.ts'</span>;
+<span class="hljs-keyword">import</span> App <span class="hljs-keyword">from</span> <span class="hljs-string">'./App.tsx'</span>;
+
+<span class="hljs-keyword">const</span> msalInstance = <span class="hljs-keyword">new</span> PublicClientApplication(authConfig);
+
+createRoot(<span class="hljs-built_in">document</span>.getElementById(<span class="hljs-string">'root'</span>)!).render(
+  &lt;StrictMode&gt;
+    &lt;MsalProvider instance={msalInstance}&gt;
+      &lt;App /&gt;
+    &lt;<span class="hljs-regexp">/MsalProvider&gt;
+  &lt;/</span>StrictMode&gt;,
+);
+</div></code></pre>
+<h3 id="%E3%82%AB%E3%82%B9%E3%82%BF%E3%83%A0%E3%83%95%E3%83%83%E3%82%AF">カスタムフック</h3>
+<p>SSO や Microsoft Graph API を呼び出す次のカスタムフックを作成します。</p>
+<ul>
+<li><code>useAuthenticated</code>: <code>src/hooks/useAuthenticated.ts</code>
+<ul>
+<li>認証状態と認証済みアカウント情報を提供します。</li>
+</ul>
+</li>
+<li><code>useAcquireToken</code>: <code>src/hooks/useAcquireToken.ts</code>
+<ul>
+<li>認証済みアカウントを使用してアクセストークンを取得する関数を提供します。</li>
+</ul>
+</li>
+<li><code>useSSO</code>: <code>src/hooks/useSSO.ts</code>
+<ul>
+<li>SSO に関連する状態やハンドラを提供します。
+<ul>
+<li>アカウントが認証済みかを確認中であることを示すフラグ</li>
+<li>アカウントが認証済みかを示すフラグ</li>
+<li>SSO ログインハンドラ</li>
+<li>アカウントを認証中であることを示すフラグ</li>
+<li>SSO ログアウトハンドラ</li>
+<li>エラー</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><code>useUserProfile</code>: <code>src/hooks/useUserProfile.ts</code>
+<ul>
+<li>Microsoft Graph API を呼び出して、ユーザープロファイル情報を提供します。</li>
+</ul>
+</li>
+</ul>
+<h3 id="app%E3%82%B3%E3%83%B3%E3%83%9D%E3%83%BC%E3%83%8D%E3%83%B3%E3%83%88">Appコンポーネント</h3>
+<p>上記カスタムフックを使用して、SSO ログイン、SSO ログアウト、ユーザープロファイル情報の表示を行うコンポーネントです。</p>
+<p><code>AuthenticatedTemplate</code> コンポーネントは、アカウントが認証済みの場合に、子コンポーネントをレンダリングします。<br>
+<code>UnauthenticatedTemplate</code> コンポーネントは、アカウントが認証されていない場合に、子コンポーネントをレンダリングします。</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">import</span> {
+  AuthenticatedTemplate,
+  UnauthenticatedTemplate,
+} <span class="hljs-keyword">from</span> <span class="hljs-string">'@azure/msal-react'</span>;
+<span class="hljs-keyword">import</span> { useSSO } <span class="hljs-keyword">from</span> <span class="hljs-string">'./hooks'</span>;
+<span class="hljs-keyword">import</span> { UserProfile } <span class="hljs-keyword">from</span> <span class="hljs-string">'./components/UserProfile'</span>;
+
+<span class="hljs-keyword">interface</span> ButtonProps {
+  onClick: <span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> <span class="hljs-built_in">Promise</span>&lt;<span class="hljs-built_in">void</span>&gt;;
+}
+<span class="hljs-keyword">const</span> LoginButton = <span class="hljs-function">(<span class="hljs-params">{ onClick }: ButtonProps</span>) =&gt;</span> {
+  <span class="hljs-keyword">return</span> &lt;button onClick={onClick}&gt;Login via Microsoft Entra ID&lt;<span class="hljs-regexp">/button&gt;;
+};
+
+const LogoutButton = ({ onClick }: ButtonProps) =&gt; {
+  return &lt;button onClick={onClick}&gt;Logout&lt;/</span>button&gt;;
+};
+
+<span class="hljs-keyword">const</span> App = <span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+  <span class="hljs-keyword">const</span> { isCheckingSSO, isLoginInProgress, login, logout, error } = useSSO();
+
+  <span class="hljs-keyword">return</span> (
+    &lt;&gt;
+      &lt;p&gt;Entra ID SSO Sample&lt;<span class="hljs-regexp">/p&gt;
+      {isCheckingSSO &amp;&amp; &lt;p&gt;Checking SSO status...&lt;/</span>p&gt;}
+      {isLoginInProgress &amp;&amp; &lt;p&gt;Login <span class="hljs-keyword">in</span> progress...&lt;<span class="hljs-regexp">/p&gt;}
+      {error &amp;&amp; &lt;p style={{ color: 'red' }}&gt;Error: {error}&lt;/</span>p&gt;}
+      &lt;AuthenticatedTemplate&gt;
+        &lt;p&gt;You are logged <span class="hljs-keyword">in</span>!&lt;<span class="hljs-regexp">/p&gt;
+        &lt;UserProfile /</span>&gt;
+        &lt;LogoutButton onClick={logout} /&gt;
+      &lt;<span class="hljs-regexp">/AuthenticatedTemplate&gt;
+      &lt;UnauthenticatedTemplate&gt;
+        &lt;p&gt;You are not logged in.&lt;/</span>p&gt;
+        &lt;LoginButton onClick={login} /&gt;
+      &lt;<span class="hljs-regexp">/UnauthenticatedTemplate&gt;
+    &lt;/</span>&gt;
+  );
+};
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">default</span> App;
+</div></code></pre>
+<h2 id="msal%E3%81%AE%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9%E3%83%88%E3%83%BC%E3%82%AF%E3%83%B3%E3%81%AE%E3%82%AD%E3%83%A3%E3%83%83%E3%82%B7%E3%83%A5%E3%81%A8%E3%83%AA%E3%83%95%E3%83%AC%E3%83%83%E3%82%B7%E3%83%A5">MSALのアクセストークンのキャッシュとリフレッシュ</h2>
+<p>MSALは、アクセストークンを自動でキャッシュし、その有効期限を管理します。</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">const</span> [instance] = useMsal();
+
+<span class="hljs-keyword">const</span> request = {
+  scopes: [<span class="hljs-string">'User.Read'</span>],
+  account: instance.getActiveAccount(),
+};
+
+<span class="hljs-comment">// アクセストークンを取得</span>
+<span class="hljs-keyword">const</span> tokenResponse = <span class="hljs-keyword">await</span> instance.acquireTokenSilent(request);
+<span class="hljs-keyword">const</span> accessToken = tokenResponse.accessToken;
+
+<span class="hljs-comment">// Microsoft Graph APIを呼び出す</span>
+<span class="hljs-keyword">const</span> graphResponse = <span class="hljs-keyword">await</span> fetch(<span class="hljs-keyword">import</span>.meta.env.VITE_GRAPH_ME_ENDPOINT, {
+    headers: {
+      Authorization: <span class="hljs-string">`Bearer <span class="hljs-subst">${accessToken}</span>`</span>,
+    },
+  });
+</div></code></pre>
+<p><code>acquireTokenSilent</code>は、キャッシュされたアクセストークンが有効な場合は、そのアクセストークンを返します。<br>
+一方、キャッシュされたアクセストークンが期限切れ、または無効な場合は、内部で再認証フローを実行し、新しいアクセストークンを取得（リフレッシュ）して返します。</p>
+<p>このため、Microsoft Graph APIやバックエンドAPIを呼び出す際は、アクセストークンを保持し続けるのではなく、都度<code>acquireTokenSilent</code>を呼び出してアクセストークンを取得する実装としています。</p>
+<h2 id="entra-id%E3%81%8C%E7%99%BA%E8%A1%8C%E3%81%99%E3%82%8B%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9%E3%83%88%E3%83%BC%E3%82%AF%E3%83%B3api%E3%81%94%E3%81%A8%E3%81%AB%E7%99%BA%E8%A1%8C%E3%81%95%E3%82%8C%E3%82%8B%E3%83%88%E3%83%BC%E3%82%AF%E3%83%B3">Entra IDが発行するアクセストークン（APIごとに発行されるトークン）</h2>
+<p>Entra IDが発行するアクセストークンは、リクエスト時に指定したスコープに基づいて、<strong>どのAPI（リソース）を呼び出すためのトークンか</strong>が決定されます。<br>
+その結果、呼び出し対象のAPIごとに異なるアクセストークンが発行されます。</p>
+<p>例えば、Microsoft Graph API用のアクセストークンを取得する場合は、<br>
+Microsoft Graphが定義しているスコープである<code>User.Read</code>を指定します。</p>
+<p>次のコードで発行されるアクセストークンは、<code>aud（Audience）</code>が<code>https://graph.microsoft.com</code>となり、Microsoft Graph API専用のアクセストークンになります。</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">const</span> request = {
+  scopes: [<span class="hljs-string">'User.Read'</span>],
+  account: instance.getActiveAccount(),
+};
+<span class="hljs-keyword">const</span> tokenResponse = <span class="hljs-keyword">await</span> instance.acquireTokenSilent(request);
+<span class="hljs-keyword">const</span> accessToken = tokenResponse.accessToken;
+</div></code></pre>
+<p>一方で、バックエンドAPI用のアクセストークンを取得する場合は、バックエンドAPIとして登録したアプリケーションに対して公開したスコープを指定します。<br>
+スコープは、バックエンドAPIのアプリケーションID URIに基づく形式になります。</p>
+<p>次のコードで発行されるアクセストークンは、<code>aud</code>がバックエンドAPIのアプリケーション（クライアント）IDとなり、そのバックエンドAPI専用のアクセストークンになります。</p>
+<pre class="hljs"><code><div><span class="hljs-comment">// &lt;scope-name&gt; は、access_as_userなど、バックエンドAPIで定義したスコープ名に置き換えます</span>
+<span class="hljs-keyword">const</span> request = {
+  scopes: [<span class="hljs-string">'api://&lt;backend-api-app-client-id&gt;/&lt;scope-name&gt;'</span>],
+  account: instance.getActiveAccount(),
+};
+
+<span class="hljs-keyword">const</span> tokenResponse = <span class="hljs-keyword">await</span> instance.acquireTokenSilent(request);
+<span class="hljs-keyword">const</span> accessToken = tokenResponse.accessToken;
+</div></code></pre>
+<h2 id="entra-id%E3%81%AB%E9%96%A2%E3%81%99%E3%82%8B%E8%BF%BD%E5%8A%A0%E8%AA%AC%E6%98%8E">Entra IDに関する追加説明</h2>
+<h3 id="entra-id%E3%81%AB%E7%99%BB%E9%8C%B2%E3%81%99%E3%82%8B%E3%82%A2%E3%83%97%E3%83%AA">Entra IDに登録するアプリ</h3>
+<p>Entra IDから渡されるアクセストークンは、誰が、何のために、どのリソースを使用するのかを示します。<br>
+したがって、アクセストークンを渡す宛先（誰が）が異なる場合、それぞれの宛先をアプリとしてEntra IDに登録する必要があります。</p>
+<h3 id="api%E3%81%AE%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9%E8%A8%B1%E5%8F%AF">APIのアクセス許可</h3>
+<p>Entra IDでフロントエンド用アプリにAPIのアクセス許可を追加することは、Entra IDに対して「要求されたときに、それを宛先とするアクセストークンを発行できるようにしておく」という事前設定です。</p>
+<p>APIのアクセス許可を追加するとき、管理者の同意が必要かどうかは、誰のリソースに、どこまで影響する権限であるかで決まります。<br>
+フロントエンド用アプリに追加したGraph APIの<code>User.Read</code>は、サインインしたユーザー自身のリスクが小さい個人情報に限定されるため、ユーザー自身が同意できます。</p>
+<p>一方、バックエンドは組織が定義した独自リソースであり、そのAPIにユーザーとしてアクセスすることは、管理者による同意が必要になります。<br>
+したがって、フロントエンド用アプリにバックエンドAPIの「APIのアクセス許可」を追加する場合、管理者による同意が必要になります。</p>
+<h3 id="%E3%83%95%E3%83%AD%E3%83%B3%E3%83%88%E3%82%A8%E3%83%B3%E3%83%89%E3%81%A8%E3%83%90%E3%83%83%E3%82%AF%E3%82%A8%E3%83%B3%E3%83%89%E3%81%AE%E4%B8%A1%E6%96%B9%E3%81%A7microsoft-graph%E3%82%92%E5%91%BC%E3%81%B3%E5%87%BA%E3%81%99%E5%A0%B4%E5%90%88%E3%81%AE%E8%A8%AD%E5%AE%9A%E4%BE%8B">フロントエンドとバックエンドの両方でMicrosoft Graphを呼び出す場合の設定例</h3>
+<p>SPAフロントエンドとバックエンドのAPIサーバーがあり、フロントエンドがMicrosoft GraphのAPIとバックエンドのAPIを呼び出し、バックエンドがMicrosoft GraphのAPIを呼び出す構成を考えます。<br>
+この場合、フロントエンド用とバックエンド用のアプリをEntra IDに登録する必要があります。</p>
+<p>バックエンド用アプリでは、Microsoft Graphへの「APIのアクセス許可」を追加するとともに、スコープを追加してAPIを公開します。<br>
+また、フロントエンド用アプリでは、Microsoft Graphとバックエンドへの「APIのアクセス許可」を追加します。</p>
+<p>これにより、バックエンドは、Microsoft GraphのAPIを呼び出すアクセストークンを取得できます。<br>
+また、フロントエンドは、Microsoft GraphとバックエンドのAPIを呼び出すアクセストークンを取得できます。</p>
+<p>これにより、フロントエンドはMicrosoft GraphおよびバックエンドのAPIを呼び出すためのアクセストークンを取得できます。<br>
+また、バックエンドはOBOフローまたはアプリケーション権限を用いてMicrosoft Graphを呼び出すためのアクセストークンを取得できる。</p>
+<h3 id="%E3%83%90%E3%83%83%E3%82%AF%E3%82%A8%E3%83%B3%E3%83%89%E3%81%8B%E3%82%89microsoft-graph%E3%82%92%E5%91%BC%E3%81%B3%E5%87%BA%E3%81%99%E6%96%B9%E6%B3%95">バックエンドからMicrosoft Graphを呼び出す方法</h3>
+<p>バックエンドからMicrosoft Graphを呼び出す方法は大きく分けて2つあり、どちらを採用するかによって、バックエンド用アプリに付与するMicrosoft Graphの API アクセス許可の種類が異なります。</p>
+<ul>
+<li>On-Behalf-Of（OBO、ユーザー代理）</li>
+<li>アプリケーション権限（Client Credentials）</li>
+</ul>
+<p>OBOは、バックエンドがフロントエンドから渡されたアクセストークンを基に、Microsoft Graphを呼び出すためのアクセストークンを新たに取得し、そのトークンを用いてGraph API を呼び出す方式です<br>
+この場合、バックエンドは「フロントエンドを利用しているユーザー」の権限を代理してGraph APIを呼び出すため、当該ユーザー自身の情報のみを取得できます（例：User.Read）。</p>
+<p>一方、アプリケーション権限は、ユーザーのサインインを前提とせず、バックエンドアプリケーション自体にMicrosoft Graphを呼び出す権限を付与する方式です。<br>
+この権限は組織全体への影響が大きいため、管理者の同意が必要となります。<br>
+アプリケーション権限を使用した場合、バックエンドはEntra IDに登録されているすべてのユーザーの情報をGraph APIで取得できます（例：User.Read.All）。</p>
+
+  </body>
+</html>

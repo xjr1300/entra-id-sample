@@ -1,0 +1,4 @@
+web:
+  port: <port>
+entra_id:
+  tenant_id: <tenant-id>
