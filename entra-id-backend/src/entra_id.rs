@@ -78,6 +78,7 @@ pub enum EntraIdError {
 }
 
 /// JWTのクレーム
+#[allow(dead_code)]
 #[derive(Clone, Deserialize)]
 pub struct Claims {
     /// 購読者（audience）
@@ -490,16 +491,6 @@ impl EntraIdTokenVerifier {
         // Notifyの使いまわしを避けて、新しいNotifyを作成
         state.notify = Arc::new(Notify::new());
         result
-    }
-
-    /// すべてのテナントのJWK公開鍵セットをリフレッシュする。
-    pub async fn refresh_all_tenants_jwks_cache(&self) -> EntraIdResult<()> {
-        for tenant_id in self.registry.keys() {
-            if let Err(e) = self.maybe_refresh_tenant_jwks_cache(tenant_id).await {
-                tracing::warn!(tenant_id = %tenant_id, error = %e, "Failed to refresh JWK cache for tenant");
-            }
-        }
-        Ok(())
     }
 
     /// JWK公開鍵を最後に確認した時刻が、指定された時間を超えた場合、そのJWK公開鍵をキャッシュから削除する。

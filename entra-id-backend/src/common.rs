@@ -9,6 +9,7 @@ use crate::entra_id::EntraIdError;
 
 pub type AppResult<T> = Result<T, AppError>;
 
+#[allow(dead_code)]
 #[derive(thiserror::Error, Debug)]
 pub enum AppError {
     #[error("{0}")]

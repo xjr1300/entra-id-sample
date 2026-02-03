@@ -7,11 +7,11 @@ use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
 
-pub mod common;
-pub mod config;
-pub mod entra_id;
+mod common;
+mod config;
+mod entra_id;
 mod handlers;
-pub mod state;
+mod state;
 
 use crate::config::AppConfig;
 use crate::entra_id::EntraIdTokenVerifier;
@@ -34,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting the application...");
 
+    // Entra IDトークン検証者の構築
     let shutdown_token = CancellationToken::new();
     let token_verifier = EntraIdTokenVerifier::new(
         // テナント
