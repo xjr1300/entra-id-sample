@@ -19,7 +19,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AuthClaims {
     pub claims: Claims,
-    pub token: BearerToken,
+    pub access_token: BearerToken,
 }
 
 impl FromRequestParts<AppState> for AuthClaims {
@@ -34,7 +34,7 @@ impl FromRequestParts<AppState> for AuthClaims {
             .await
             .map_err(|_| RequestError {
                 code: StatusCode::UNAUTHORIZED,
-                message: "Bearer token not found".into(),
+                message: "Authorization header with Bearer token is required".into(),
             })?;
         let token = BearerToken(SecretString::new(bearer.token().into()));
 
@@ -47,10 +47,13 @@ impl FromRequestParts<AppState> for AuthClaims {
                 tracing::error!(error = %e, "Token verification failed");
                 RequestError {
                     code: StatusCode::UNAUTHORIZED,
-                    message: format!("Token verification failed: {e}"),
+                    message: "Invalid access token".into(),
                 }
             })?;
 
-        Ok(AuthClaims { claims, token })
+        Ok(AuthClaims {
+            claims,
+            access_token: token,
+        })
     }
 }

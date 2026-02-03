@@ -1,7 +1,12 @@
 use std::time::Duration;
 
+use axum::http::{HeaderName, Response};
+use axum::{body::Body, http::Request};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
+use tower_http::request_id::{MakeRequestUuid, RequestId};
+use tower_http::{request_id::SetRequestIdLayer, trace::TraceLayer};
+use tracing::Span;
 use tracing::subscriber::set_global_default;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -59,7 +64,15 @@ async fn main() -> anyhow::Result<()> {
         token_verifier,
         client_credentials: app_config.client_credentials,
     };
-    let router = create_routes().with_state(app_state.clone());
+    let x_request_id = HeaderName::from_static("x-request-id");
+    let router = create_routes()
+        .with_state(app_state.clone())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_span)
+                .on_response(on_response),
+        )
+        .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid));
 
     // Webサーバーの起動
     tracing::info!("Starting the web server on port {}", app_config.web.port);
@@ -146,4 +159,29 @@ async fn shutdown_signal(token: CancellationToken) {
 
     tracing::info!("Shutdown signal received");
     token.cancel();
+}
+
+fn make_span(request: &Request<Body>) -> Span {
+    let request_id = request
+        .extensions()
+        .get::<RequestId>()
+        .and_then(|id| id.header_value().to_str().ok())
+        .unwrap_or("unknown");
+    tracing::info_span!(
+        "http_request",
+        request_id = %request_id,
+        method = %request.method(),
+        uri = %request.uri().path(),
+    )
+}
+
+fn on_response(response: &Response<Body>, latency: Duration, _span: &Span) {
+    let status = response.status();
+    if status.is_server_error() {
+        tracing::error!(%status, latency_ms = latency.as_millis(), "request failed");
+    } else if status.is_client_error() {
+        tracing::warn!(%status, latency_ms = latency.as_millis(), "client error");
+    } else {
+        tracing::info!(%status, latency_ms = latency.as_millis(), "request completed");
+    }
 }

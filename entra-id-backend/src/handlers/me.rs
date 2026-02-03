@@ -25,10 +25,13 @@ struct TokenResponse {
     // 他のフィールドは省略
 }
 
-#[tracing::instrument(skip(app_state, claims, token))]
+#[tracing::instrument(skip(app_state, claims, access_token))]
 pub async fn me(
     State(app_state): State<AppState>,
-    AuthClaims { claims, token }: AuthClaims,
+    AuthClaims {
+        claims,
+        access_token,
+    }: AuthClaims,
 ) -> AppResult<impl IntoResponse> {
     // テナントIDを取得
     let tenant_id = extract_issuer_from_iss(&claims.iss).map_err(|e| {
@@ -57,7 +60,7 @@ pub async fn me(
             "client_secret",
             app_state.client_credentials.client_secret.expose_secret(),
         ),
-        ("assertion", token.0.expose_secret()),
+        ("assertion", access_token.0.expose_secret()),
         ("scope", "https://graph.microsoft.com/User.Read"),
         ("requested_token_use", "on_behalf_of"),
     ];
