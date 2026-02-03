@@ -540,7 +540,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
- "tower-http",
  "tracing",
  "tracing-bunyan-formatter",
  "tracing-log 0.2.0",
@@ -2380,7 +2379,6 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]

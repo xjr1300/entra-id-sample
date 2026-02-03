@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tower_http::trace::TraceLayer;
 use tracing::subscriber::set_global_default;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -21,11 +20,13 @@ use crate::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let app_config = AppConfig::load()?;
+
     LogTracer::init().map_err(|e| {
         tracing::error!(error = %e, "Failed to initialize LogTracer");
         e
     })?;
-    let subscriber = create_subscriber("entra-id-backend", "info");
+    let subscriber = create_subscriber("entra-id-backend", &app_config.log_level);
     set_global_default(subscriber).map_err(|e| {
         tracing::error!(error = %e, "Failed to set global default subscriber");
         e
@@ -33,18 +34,17 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting the application...");
 
-    let app_config = AppConfig::load().map_err(|e| {
-        tracing::error!(error = %e, "Failed to load application configuration");
-        e
-    })?;
-    tracing::info!("Loaded application config");
-
     let shutdown_token = CancellationToken::new();
     let token_verifier = EntraIdTokenVerifier::new(
+        // テナント
         app_config.entra_id.tenants.clone(),
+        // JWKキャッシュのTTL
         Duration::from_secs(app_config.entra_id.jwk_cache_ttl),
+        // 定期的にJWKsをリフレッシュする間隔
         Duration::from_secs(app_config.entra_id.refresh_jwks_interval),
+        // テナントのJWKsをリフレッシュする最小間隔
         Duration::from_secs(app_config.entra_id.refresh_tenant_jwks_interval),
+        // シャットダウン用トークン
         shutdown_token.clone(),
     )
     .await
@@ -53,14 +53,14 @@ async fn main() -> anyhow::Result<()> {
         e
     })?;
 
+    // ルーターの作成
     let app_state = AppState {
         token_verifier,
         client_credentials: app_config.client_credentials,
     };
-    let router = create_routes(app_state.clone())
-        .with_state(app_state)
-        .layer(TraceLayer::new_for_http());
+    let router = create_routes().with_state(app_state.clone());
 
+    // Webサーバーの起動
     tracing::info!("Starting the web server on port {}", app_config.web.port);
     let listener = TcpListener::bind(format!("0.0.0.0:{}", app_config.web.port)).await?;
     axum::serve(listener, router)
@@ -73,13 +73,27 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!(error = %e, "Failed to start the web server");
             e
         })?;
+
+    // Webサーバーが優雅にシャットダウンされたかをログに出力
     if shutdown_token.is_cancelled() {
         tracing::info!("Application has been shut down gracefully");
+    } else {
+        tracing::warn!("Application has been shut down unexpectedly");
     }
 
     Ok(())
 }
 
+/// ログ購読者を作成する。
+///
+/// # Arguments
+///
+/// * `name` - アプリケーション名
+/// * `level` - ログレベル
+///
+/// # Returns
+///
+/// 作成したログ購読者
 fn create_subscriber(name: &str, level: &str) -> impl tracing::Subscriber + Send + Sync {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
     let formatting_layer = BunyanFormattingLayer::new(name.into(), std::io::stdout);
@@ -89,6 +103,11 @@ fn create_subscriber(name: &str, level: &str) -> impl tracing::Subscriber + Send
         .with(formatting_layer)
 }
 
+/// シャットダウンシグナルを受け取るまで待機する非同期関数
+///
+/// # Arguments
+///
+/// * `token` - シャットダウン用のキャンセレーショントークン
 async fn shutdown_signal(token: CancellationToken) {
     use tokio::signal;
 

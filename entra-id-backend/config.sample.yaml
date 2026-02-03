@@ -1,4 +1,27 @@
+log_level: <error, warn, info, debug, trace>
 web:
-  port: <port>
+  port: <port number>
 entra_id:
-  tenant_id: <tenant-id>
+  tenants:
+    - id: <tenant id>
+      uri: <JWKs uri>
+      issuer: <https://login.microsoftonline.com/<tenant id>/v2.0
+      audience: <audience>
+
+  # キャッシュしたJWK公開鍵のTTL（秒）
+  # 48時間 = 172800秒
+  jwk_cache_ttl: 172800
+
+  # 定期的にバックグラウンドですべてのテナントのJWK公開鍵をリフレッシュする間隔（秒）
+  # 1時間 = 3600秒
+  refresh_jwks_interval: 3600
+
+  # kidを基にテナントのJWK公開鍵を得られなかったときに、そのテナントのJWK公開鍵が最後にリフレッシュされてから、
+  # 次にリフレッシュするまでの最小時間（秒）
+  # 5分 = 300秒
+  refresh_tenant_jwks_interval: 300
+
+# このアプリケーション用のクライアント資格情報
+client_credentials:
+  client_id: <client id>
+  client_secret: <client secret>

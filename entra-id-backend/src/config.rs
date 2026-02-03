@@ -16,6 +16,7 @@ pub enum ConfigError {
 
 #[derive(Deserialize)]
 pub struct AppConfig {
+    pub log_level: String,
     pub web: WebConfig,
     pub entra_id: EntraIdConfig,
     pub client_credentials: ClientCredentials,

@@ -1,14 +1,10 @@
 use crate::{
     common::{AppError, AppResult, ErrorBody},
     entra_id::extract_issuer_from_iss,
-    handlers::{extract_bearer_token, middleware::AuthClaims},
+    handlers::extractors::AuthClaims,
     state::AppState,
 };
-use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
 
@@ -29,15 +25,11 @@ struct TokenResponse {
     // 他のフィールドは省略
 }
 
-#[tracing::instrument(skip(app_state, claims, headers))]
+#[tracing::instrument(skip(app_state, claims, token))]
 pub async fn me(
     State(app_state): State<AppState>,
-    AuthClaims(claims): AuthClaims,
-    headers: HeaderMap,
+    AuthClaims { claims, token }: AuthClaims,
 ) -> AppResult<impl IntoResponse> {
-    // Bearerトークンを抽出
-    let token = extract_bearer_token(&headers).unwrap(); // ミドルウェアで既に検証済みなので安全にunwrapできる
-
     // テナントIDを取得
     let tenant_id = extract_issuer_from_iss(&claims.iss).map_err(|e| {
         tracing::error!(error = %e, "Failed to extract tenant ID from iss");

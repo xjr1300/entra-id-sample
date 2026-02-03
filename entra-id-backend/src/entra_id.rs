@@ -248,6 +248,7 @@ struct JwksCache {
 }
 
 /// Bearerトークン
+#[derive(Clone)]
 pub struct BearerToken(pub SecretString);
 
 /// Entra IDトークン検証者
