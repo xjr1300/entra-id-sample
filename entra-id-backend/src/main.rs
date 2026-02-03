@@ -62,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting the web server on port {}", app_config.web.port);
     let listener = TcpListener::bind(format!("0.0.0.0:{}", app_config.web.port)).await?;
     axum::serve(listener, router)
+        // `shutdown_signal`関数は、非同期関数であり`impl Future<Output = ()>`を返す。
+        // したがって、axumは、`with_graceful_shutdown`で渡された`Future`が完了したとき、
+        // axumサーバーをシャットダウンする。
         .with_graceful_shutdown(shutdown_signal(shutdown_token.clone()))
         .await
         .map_err(|e| {
@@ -87,16 +90,20 @@ fn create_subscriber(name: &str, level: &str) -> impl tracing::Subscriber + Send
 async fn shutdown_signal(token: CancellationToken) {
     use tokio::signal;
 
+    // Ctrl+Cシグナルの待機
     let ctrl_c = async {
+        // Ctrl+C（SIGINT: Signal Interrupt）シグナルを待機
         if let Err(e) = signal::ctrl_c().await {
             tracing::error!(error = %e, "Failed to install Ctrl+C handler");
         }
     };
 
+    // SIGTERMシグナルの待機（Unix系OSのみ）
     #[cfg(unix)]
     let terminate = async {
         match signal::unix::signal(signal::unix::SignalKind::terminate()) {
             Ok(mut sigterm) => {
+                // SIGTERMシグナルを待機
                 sigterm.recv().await;
             }
             Err(e) => {
@@ -105,9 +112,11 @@ async fn shutdown_signal(token: CancellationToken) {
         }
     };
 
+    // Windowsやその他のOSではSIGTERMが利用できないため、永遠に完了しないFutureを使用
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
+    // `ctrl_c`と`terminate`のいずれかが完了するまで待機
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
