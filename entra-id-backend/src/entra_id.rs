@@ -6,12 +6,14 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+/// Entra ID関連の処理の結果型
 pub type EntraIdResult<T> = Result<T, EntraIdError>;
 
+/// Entra ID関連のエラー
 #[derive(Debug, thiserror::Error)]
 pub enum EntraIdError {
     /// 指定したテナントのJWK公開鍵セットの取得に失敗
@@ -78,13 +80,17 @@ pub enum EntraIdError {
 /// JWTのクレーム
 #[derive(Deserialize)]
 pub struct Claims {
+    /// 購読者（audience）
     pub aud: String,
+    /// 発行者（issuer）
     pub iss: String,
+    /// 有効期限（expiration）
     pub exp: usize,
+    /// オブジェクトID
     pub oid: String,
+    /// サブジェクト
     pub sub: String,
-    pub preferred_username: Option<String>,
-    pub scp: Option<String>,
+    /// ロール
     pub roles: Option<Vec<String>>,
 }
 
@@ -181,6 +187,7 @@ struct JwksProvider {
     client: reqwest::Client,
 }
 
+/// JWK公開鍵セットのレスポンス
 #[derive(Deserialize)]
 struct JwksResponse {
     keys: Vec<Jwk>,
@@ -207,38 +214,43 @@ impl JwksProvider {
     }
 }
 
-struct TenantRefreshState {
+/// JWK公開鍵キャッシュのリフレッシュ状態
+struct JwksCacheRefreshState {
+    /// 最後にリフレッシュした時刻
     last_refreshed_at: Option<Instant>,
+    /// リフレッシュ中かどうか
     refreshing: bool,
+    /// リフレッシュ完了を待機しているタスクを通知するためのNotify
+    notify: Arc<Notify>,
 }
 
+impl JwksCacheRefreshState {
+    fn default() -> Self {
+        Self {
+            last_refreshed_at: None,
+            refreshing: false,
+            notify: Arc::new(Notify::new()),
+        }
+    }
+}
+
+/// テナントごとのJWK公開鍵キャッシュのリフレッシュ状態を保持するハッシュマップ
+type TenantJwksCacheRefreshStates = HashMap<TenantId, JwksCacheRefreshState>;
+
+/// テナントごとのJWK公開鍵のキャッシュ
 struct JwksCache {
     /// テナントごとのJWK公開鍵キャッシュ
     entries: RwLock<TenantJwksCache>,
+    /// テナントごとのJWK公開鍵キャッシュのリフレッシュ状態
+    refresh_states: Mutex<TenantJwksCacheRefreshStates>,
     /// JWK公開鍵キャッシュのTTL
     ttl: Duration,
-    /// JWK公開鍵キャッシュのリフレッシュ状態
-    refresh_states: Mutex<HashMap<TenantId, TenantRefreshState>>,
-    /// JWK公開鍵キャッシュのリフレッシュ間隔
-    refresh_interval: Duration,
-}
-
-/// JWK公開鍵キャッシュのリフレッシュ結果
-///
-/// `EntraIdTokenVerifier::self.maybe_refresh_tenant_jwks_cache`メソッドの正常系の`Ok`バリアントで使用する。
-/// 上記メソッドの失敗系は`Err(AppError)`で表現する。
-enum JwksCacheRefreshResult {
-    /// リフレッシュ中
-    Refreshing,
-    /// 最近リフレッシュされた
-    RecentlyRefreshed,
-    /// リフレッシュした
-    Refreshed,
 }
 
 /// Bearerトークン
 pub struct BearerToken(pub SecretString);
 
+/// Entra IDトークン検証者
 pub struct EntraIdTokenVerifier {
     /// テナントレジストリ
     registry: TenantRegistry,
@@ -246,10 +258,10 @@ pub struct EntraIdTokenVerifier {
     provider: JwksProvider,
     /// JWK公開鍵キャッシュ
     cache: JwksCache,
-    /// JWK公開鍵を定期的に更新する間隔
-    refresh_jwk_interval: Duration,
-    /// JWK公開鍵をリフレッシュしているときに処理を遅延させる時間
-    jwks_refresh_retry_delay: Duration,
+    /// バックグラウンドで定期的に、すべてのテナントのキャッシュされたJWK公開鍵をリフレッシュする間隔
+    refresh_jwks_interval: Duration,
+    /// テナントのキャッシュされたJWK公開鍵がリフレッシュされてから、次にリフレッシュされるまでの最小時間
+    refresh_tenant_jwks_interval: Duration,
     /// バックグラウンドタスクを停止するためのキャンセルトークン
     shutdown: CancellationToken,
 }
@@ -260,17 +272,17 @@ impl EntraIdTokenVerifier {
     /// # Arguments
     ///
     /// * `tenants` - テナントのリスト
-    /// * `jwk_cache_ttl` - JWK公開鍵キャッシュのTTL
-    /// * `refresh_tenant_jwk_cache_interval` - 各テナントのキャッシュしたJWK公開鍵を定期的に更新する間隔
-    /// * `refresh_all_tenant_jwk_cache_interval` - すべてのテナントのキャッシュしたJWK公開鍵を定期的に更新する間隔
-    /// * `jwks_refresh_retry_delay` - JWK公開鍵をリフレッシュしているときに処理を遅延させる時間
+    /// * `jwk_cache_ttl` - キャッシュしたJWK公開鍵のTTL（秒）
+    /// * `refresh_jwks_interval` - 定期的にバックグラウンドですべてのテナントのJWK公開鍵をリフレッシュする間隔（秒）
+    /// * `refresh_tenant_jwks_interval`
+    ///   - kidを基にテナントのJWK公開鍵を得られなかったときに、そのテナントのJWK公開鍵が最後にリフレッシュされてから、
+    ///     次にリフレッシュするまでの最小時間（秒）
     /// * `shutdown` - バックグラウンドタスクを停止するためのキャンセルトークン
     pub async fn new(
         tenants: Vec<Tenant>,
         jwk_cache_ttl: Duration,
-        refresh_tenant_jwk_cache_interval: Duration,
-        refresh_all_tenants_jwk_cache_interval: Duration,
-        jwks_refresh_retry_delay: Duration,
+        refresh_jwks_interval: Duration,
+        refresh_tenant_jwks_interval: Duration,
         shutdown: CancellationToken,
     ) -> EntraIdResult<Arc<Self>> {
         let mut tenant_registry = TenantRegistry::new();
@@ -283,6 +295,7 @@ impl EntraIdTokenVerifier {
         let mut tenant_jwks_cach = TenantJwksCache::new();
         let mut tenant_refresh_states = HashMap::new();
         for (tenant_id, tenant) in &tenant_registry {
+            // 初期化時はJWKs取得に失敗したら起動させない（fail-fast）
             let jwks = provider.fetch(&tenant.uri).await?;
             let cached_jwks: Vec<CachedJwk> = jwks.keys.into_iter().map(|key| key.into()).collect();
             let mut cached_jwk_map = CachedJwkMap::new();
@@ -290,26 +303,19 @@ impl EntraIdTokenVerifier {
                 cached_jwk_map.insert(Kid(cached_jwk.jwk.kid.clone()), cached_jwk);
             }
             tenant_jwks_cach.insert(tenant_id.clone(), cached_jwk_map);
-            tenant_refresh_states.insert(
-                tenant_id.clone(),
-                TenantRefreshState {
-                    last_refreshed_at: None,
-                    refreshing: false,
-                },
-            );
+            tenant_refresh_states.insert(tenant_id.clone(), JwksCacheRefreshState::default());
         }
         let cache = JwksCache {
             entries: RwLock::new(tenant_jwks_cach),
             ttl: jwk_cache_ttl,
             refresh_states: Mutex::new(tenant_refresh_states),
-            refresh_interval: refresh_tenant_jwk_cache_interval,
         };
         let instance = Arc::new(Self {
             registry: tenant_registry,
             provider,
             cache,
-            refresh_jwk_interval: refresh_all_tenants_jwk_cache_interval,
-            jwks_refresh_retry_delay,
+            refresh_jwks_interval,
+            refresh_tenant_jwks_interval,
             shutdown,
         });
         let cloned = Arc::clone(&instance);
@@ -355,34 +361,9 @@ impl EntraIdTokenVerifier {
             return Ok(key);
         }
 
-        // JWK公開鍵をえられなかった場合は、テナントのJWK公開鍵キャッシュを条件付きで更新
-        match self.maybe_refresh_tenant_jwks_cache(tenant_id).await {
-            Ok(result) => match result {
-                JwksCacheRefreshResult::Refreshing => {
-                    tracing::info!(
-                        "JWK cache is already refreshing for tenant_id: {}",
-                        tenant_id
-                    );
-                    tokio::time::sleep(self.jwks_refresh_retry_delay).await;
-                }
-                JwksCacheRefreshResult::RecentlyRefreshed => {
-                    tracing::info!(
-                        "JWK cache was recently refreshed for tenant_id: {}",
-                        tenant_id
-                    );
-                }
-                JwksCacheRefreshResult::Refreshed => {
-                    tracing::info!("JWK cache refreshed for tenant_id: {}", tenant_id);
-                }
-            },
-            Err(err) => {
-                tracing::error!(
-                    error = %err,
-                    "Error refreshing JWK cache for tenant_id: {}",
-                    tenant_id
-                );
-            }
-        }
+        // JWK公開鍵を得られなかった場合は、テナントのJWK公開鍵キャッシュを条件付きでリフレッシュ
+        // リフレッシュに失敗しても無視して、再度JWK公開鍵を取得を試行
+        let _ = self.maybe_refresh_tenant_jwks_cache(tenant_id).await;
 
         // 再度、テナントIDとJWK公開鍵のキーのIDからJWK公開鍵を取得
         self.find_decoding_key(tenant_id, key_id)
@@ -395,63 +376,33 @@ impl EntraIdTokenVerifier {
             })
     }
 
-    async fn maybe_refresh_tenant_jwks_cache(
-        &self,
-        tenant_id: &TenantId,
-    ) -> EntraIdResult<JwksCacheRefreshResult> {
-        let mut states = self.cache.refresh_states.lock().await;
-        let state = states
-            .entry(tenant_id.clone())
-            .or_insert(TenantRefreshState {
-                last_refreshed_at: None,
-                refreshing: false,
-            });
-
-        let now = Instant::now();
-
-        // 現在リフレッシュしている場合は終了
-        if state.refreshing {
-            drop(states);
-            return Ok(JwksCacheRefreshResult::Refreshing);
-        }
-
-        // 直近でリフレッシュ済みの場合は終了
-        if let Some(last) = state.last_refreshed_at
-            && now.duration_since(last) < self.cache.refresh_interval
-        {
-            return Ok(JwksCacheRefreshResult::RecentlyRefreshed);
-        }
-
-        // リフレッシュ開始
-        state.refreshing = true;
-        drop(states); // ロック解放
-
-        let result = self.refresh_tenant_jwks_cache(tenant_id).await;
-
-        // リフレッシュ終了
-        let mut states = self.cache.refresh_states.lock().await;
-        let state = states.get_mut(tenant_id).unwrap();
-        state.refreshing = false;
-        if result.is_ok() {
-            state.last_refreshed_at = Some(Instant::now());
-        }
-        result.map(|_| JwksCacheRefreshResult::Refreshed)
-    }
-
-    /// 指定したテナントIDのJWK公開鍵セットを更新する。
+    /// 指定したテナントIDのJWK公開鍵を取得して、既存のキャッシュに追加する。
     ///
     /// # Arguments
     ///
     /// * `tenant_id` - テナントID
+    ///
+    /// # Notes
+    ///
+    /// このメソッドは、新たにテナントのJWK公開鍵を取得し、既存のキャッシュに同じ`kid`を持つJWK公開鍵が存在する場合は、
+    /// `last_seen_at`を更新し、存在しない場合はキャッシュに追加する。
+    ///
+    /// したがって、既存のキャッシュに古いJWK公開鍵があっても、それらは削除されない。
+    ///
+    /// 古いJWK公開鍵の削除は、バックグラウンドで実行することを想定した`refresh_jwks_cache_periodically`メソッド
+    /// から呼び出される`cleanup_expired_jwks_cache`メソッドで行われる。
     async fn refresh_tenant_jwks_cache(&self, tenant_id: &TenantId) -> EntraIdResult<()> {
         // テナント情報を取得
         let tenant = self
             .registry
             .get(tenant_id)
             .ok_or_else(|| EntraIdError::TenantNotFound(tenant_id.clone()))?;
-        // テナントのJWK公開鍵セットをフェッチ
+
+        // テナントのJWK公開鍵をフェッチ
         let fetched = self.provider.fetch(&tenant.uri).await?;
-        // 新しいJWK公開鍵をマージ
+
+        // 取得したJWK公開鍵が、既存のキャッシュに存在するかを確認し、存在する場合は`last_seen_at`を更新し、
+        // 存在しない場合はキャッシュに追加
         let now = Instant::now();
         let mut cache = self.cache.entries.write().await;
         let cached_jwk_map = cache.get_mut(tenant_id).unwrap(); // 存在確認済み
@@ -469,39 +420,110 @@ impl EntraIdTokenVerifier {
         Ok(())
     }
 
-    /// すべてのテナントのJWK公開鍵セットを更新する。
+    /// 指定したテナントのJWK公開鍵を条件付きでリフレッシュする。
+    ///
+    /// # Arguments
+    ///
+    /// * `tenant_id` - テナントID
+    ///
+    /// # Notes
+    ///
+    /// 指定したテナントのJWK公開鍵が、最後にリフレッシュされてから`refresh_tenant_jwks_interval`を超えていなければ、
+    /// リフレッシュ頻度が多くなることを避けるため、リフレッシュしない。
+    ///
+    /// 現在のスレッドが、指定したテナントのJWK公開鍵をリフレッシュ中であることを確認した場合、他のスレッドがリフレッシュを
+    /// 完了するまで待機する。
+    ///
+    /// 現在のスレッドが、指定したテナントのJWK公開鍵をリフレッシュ中出ないことを確認した場合、リフレッシュフラグを成立させる
+    /// ことで、現在のスレッドが他のスレッドを待機させた後、リフレッシュする。
+    /// JWK公開鍵のリフレッシュが終了したとき、成功または失敗をにかかわらず、リフレッシュフラグを解除し、他のスレッドに通知して
+    /// 待機を解除する。
+    async fn maybe_refresh_tenant_jwks_cache(&self, tenant_id: &TenantId) -> EntraIdResult<()> {
+        let now = Instant::now();
+
+        let mut states = self.cache.refresh_states.lock().await;
+        let state = states
+            .entry(tenant_id.clone())
+            .or_insert(JwksCacheRefreshState::default());
+
+        // 最後にリフレッシュしてから、最小リフレッシュ間隔を超えていなければリフレッシュしない
+        if let Some(last_refreshed_at) = state.last_refreshed_at
+            && now.duration_since(last_refreshed_at) < self.refresh_tenant_jwks_interval
+        {
+            tracing::info!( tenant_id = %tenant_id, "Skip JWK refresh due to cool down");
+            return Ok(());
+        }
+
+        if state.refreshing {
+            // 現在リフレッシュしている場合は、他のスレッドがリフレッシュするまで待機
+            let notify = state.notify.clone();
+            drop(states); // ロック解放
+            notify.notified().await;
+            return Ok(());
+        }
+
+        // リフレッシュしていない場合は、このスレッドがリフレッシュを担当
+        state.refreshing = true;
+        drop(states); // ロック解放
+
+        // テナントのJWK公開鍵キャッシュをリフレッシュ
+        // 運用中のリフレッシュはベストエフォートとし、失敗しても処理を継続
+        let result = self.refresh_tenant_jwks_cache(tenant_id).await;
+        let last_refreshed_at = if result.is_ok() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+
+        // リフレッシュを実行
+        let mut states = self.cache.refresh_states.lock().await;
+
+        // リフレッシュ処理が終了したため、リフレッシュ中でない状態に変更した後、他のスレッドに通知して待機を解除
+        let state = states.get_mut(tenant_id).unwrap();
+        state.refreshing = false;
+        state.notify.notify_waiters();
+        // リフレッシュに成功した場合は、最後にリフレッシュした時刻を更新
+        if last_refreshed_at.is_some() {
+            state.last_refreshed_at = last_refreshed_at;
+        }
+        // Notifyの使いまわしを避けて、新しいNotifyを作成
+        state.notify = Arc::new(Notify::new());
+        result
+    }
+
+    /// すべてのテナントのJWK公開鍵セットをリフレッシュする。
     pub async fn refresh_all_tenants_jwks_cache(&self) -> EntraIdResult<()> {
         for tenant_id in self.registry.keys() {
-            if let Err(e) = self.refresh_tenant_jwks_cache(tenant_id).await {
+            if let Err(e) = self.maybe_refresh_tenant_jwks_cache(tenant_id).await {
                 tracing::warn!(tenant_id = %tenant_id, error = %e, "Failed to refresh JWK cache for tenant");
             }
         }
         Ok(())
     }
 
-    /// 古くなったJWK公開鍵をキャッシュから削除する。
+    /// JWK公開鍵を最後に確認した時刻が、指定された時間を超えた場合、そのJWK公開鍵をキャッシュから削除する。
     ///
-    /// ただし、TTLを超過した場合でも、テナントで`last_seen_at`が最も新しいJWK公開鍵は最低1つ残す。
+    /// # Notes
+    ///
+    /// TTLを超過した場合でも、テナントで`last_seen_at`が最も新しいJWK公開鍵は最低1つ残す。
     async fn cleanup_expired_jwks_cache(&self) {
         let mut cache = self.cache.entries.write().await;
         let now = Instant::now();
 
-        for (tenant_id, cached_jwk_map) in cache.iter_mut() {
+        // テナントごとにJWK公開鍵のキャッシュを走査
+        for (tenant_id, jwks) in cache.iter_mut() {
             // 現在キャッシュしているJWK公開鍵を保持
-            let mut original = std::mem::take(cached_jwk_map);
+            let mut original = std::mem::take(jwks);
             // 現在キャッシュしているJWK公開鍵からTTLを超えていないJWK公開鍵を取得
             let mut retained: CachedJwkMap = original
                 .drain()
-                .filter(|(_, cached_jwk)| {
-                    now.duration_since(cached_jwk.last_seen_at) < self.cache.ttl
-                })
+                .filter(|(_, jwk)| now.duration_since(jwk.last_seen_at) < self.cache.ttl)
                 .collect();
-            // テナントのJWKがすべて削除されないようにする安全策として、 テナントにTTLを超えていないJWK公開鍵が存在せず、
-            // 現在のキャッシュにJWK公開鍵が存在する場合、last_seen_atが最も新しいJWKを1つ残す
+            // テナントのJWK公開鍵がすべて削除されないようにする安全策として、 テナントにTTLを超えていないJWK公開鍵が存在せず、
+            // 現在のキャッシュにそのテナントのJWK公開鍵が存在する場合、last_seen_atが最も新しいJWK公開鍵を1つ残す
             if retained.is_empty()
-                && let Some((kid, jwk)) = original
-                    .into_iter()
-                    .max_by_key(|(_, cached_jwk)| cached_jwk.last_seen_at)
+                && let Some((kid, jwk)) =
+                    original.into_iter().max_by_key(|(_, jwk)| jwk.last_seen_at)
             {
                 tracing::warn!(
                     tenant_id = %tenant_id,
@@ -510,26 +532,30 @@ impl EntraIdTokenVerifier {
                 );
                 retained.insert(kid, jwk);
             }
-            *cached_jwk_map = retained;
+            *jwks = retained;
         }
     }
 
-    /// バックグラウンドで定期的にJWK公開鍵を更新するタスクを起動する。
+    /// バックグラウンドで定期的にJWK公開鍵をリフレッシュするタスクを起動する。
     async fn refresh_jwks_cache_periodically(self: Arc<Self>) -> EntraIdResult<()> {
-        let mut interval = tokio::time::interval(self.refresh_jwk_interval);
+        let mut interval = tokio::time::interval(self.refresh_jwks_interval);
         let shutdown = self.shutdown.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = shutdown.cancelled() => {
-                        tracing::info!("JWK refresh task is shutting down.");
+                        tracing::info!("JWKs refresh task is shutting down");
                         break;
                     }
                     _ = interval.tick() => {
                         tracing::info!("Refresh all tenants JWKs cache");
-                        if let Err(e) = self.refresh_all_tenants_jwks_cache().await {
-                            tracing::error!(error = %e, "Error refreshing JWKs");
+                        // すべてのテナントについて、キャッシュしているJWK公開鍵をリフレッシュ
+                        for tenant_id in self.registry.keys() {
+                            if let Err(e) = self.maybe_refresh_tenant_jwks_cache(tenant_id).await {
+                                tracing::warn!(tenant_id = %tenant_id, error = %e, "Error refreshing JWKs for tenant");
+                            }
                         }
+                        // TTLを超えたJWK公開鍵をキャッシュから削除
                         tracing::info!("Cleanup expired JWKs cache");
                         self.cleanup_expired_jwks_cache().await;
                     }

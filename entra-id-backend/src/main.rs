@@ -42,10 +42,9 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_token = CancellationToken::new();
     let token_verifier = EntraIdTokenVerifier::new(
         app_config.entra_id.tenants.clone(),
-        Duration::from_secs(app_config.jwk.ttl_seconds),
-        Duration::from_secs(app_config.entra_id.refresh_tenant_jwk_cache_interval),
-        Duration::from_secs(app_config.entra_id.refresh_all_tenants_jwk_cache_interval),
-        Duration::from_millis(app_config.entra_id.jwks_refresh_retry_delay),
+        Duration::from_secs(app_config.entra_id.jwk_cache_ttl),
+        Duration::from_secs(app_config.entra_id.refresh_jwks_interval),
+        Duration::from_secs(app_config.entra_id.refresh_tenant_jwks_interval),
         shutdown_token.clone(),
     )
     .await
@@ -63,12 +62,15 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting the web server on port {}", app_config.web.port);
     let listener = TcpListener::bind(format!("0.0.0.0:{}", app_config.web.port)).await?;
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal(shutdown_token))
+        .with_graceful_shutdown(shutdown_signal(shutdown_token.clone()))
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to start the web server");
             e
         })?;
+    if shutdown_token.is_cancelled() {
+        tracing::info!("Application has been shut down gracefully");
+    }
 
     Ok(())
 }

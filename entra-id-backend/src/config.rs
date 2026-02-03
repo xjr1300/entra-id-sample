@@ -18,7 +18,6 @@ pub enum ConfigError {
 pub struct AppConfig {
     pub web: WebConfig,
     pub entra_id: EntraIdConfig,
-    pub jwk: JwkConfig,
     pub client_credentials: ClientCredentials,
 }
 
@@ -43,18 +42,16 @@ pub struct WebConfig {
 pub struct EntraIdConfig {
     /// テナントベクタ
     pub tenants: Vec<Tenant>,
-    /// テナントJWKキャッシュをリフレッシュする間隔（秒）
-    pub refresh_tenant_jwk_cache_interval: u64,
-    /// 全テナントのJWKキャッシュをリフレッシュする間隔（秒）
-    pub refresh_all_tenants_jwk_cache_interval: u64,
-    /// JWKのリフレッシュ失敗時のリトライ間隔（ミリ秒）
-    pub jwks_refresh_retry_delay: u64,
-}
 
-#[derive(Deserialize)]
-pub struct JwkConfig {
-    /// JWKのTTL（Time To Live）
-    pub ttl_seconds: u64,
+    /// キャッシュしたJWK公開鍵のTTL（秒）
+    pub jwk_cache_ttl: u64,
+
+    /// 定期的にバックグラウンドですべてのテナントのJWK公開鍵をリフレッシュする間隔（秒）
+    pub refresh_jwks_interval: u64,
+
+    /// kidを基にテナントのJWK公開鍵を得られなかったときに、そのテナントのJWK公開鍵が最後にリフレッシュされてから、
+    /// 次にリフレッシュするまでの最小時間（秒）
+    pub refresh_tenant_jwks_interval: u64,
 }
 
 #[derive(Clone, Deserialize)]
