@@ -10,7 +10,7 @@ use axum_extra::{
 use secrecy::SecretString;
 
 use crate::{
-    common::{AppError, ErrorBody},
+    common::RequestError,
     entra_id::{BearerToken, Claims},
     state::AppState,
 };
@@ -23,7 +23,7 @@ pub struct AuthClaims {
 }
 
 impl FromRequestParts<AppState> for AuthClaims {
-    type Rejection = AppError;
+    type Rejection = RequestError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -32,11 +32,9 @@ impl FromRequestParts<AppState> for AuthClaims {
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
-            .map_err(|_| {
-                AppError::Handler(ErrorBody {
-                    code: StatusCode::UNAUTHORIZED,
-                    message: "Bearer token not found".into(),
-                })
+            .map_err(|_| RequestError {
+                code: StatusCode::UNAUTHORIZED,
+                message: "Bearer token not found".into(),
             })?;
         let token = BearerToken(SecretString::new(bearer.token().into()));
 
@@ -47,10 +45,10 @@ impl FromRequestParts<AppState> for AuthClaims {
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "Token verification failed");
-                AppError::Handler(ErrorBody {
+                RequestError {
                     code: StatusCode::UNAUTHORIZED,
                     message: format!("Token verification failed: {e}"),
-                })
+                }
             })?;
 
         Ok(AuthClaims { claims, token })

@@ -631,13 +631,10 @@ fn decoding_key_from_jwk(jwk: &Jwk) -> EntraIdResult<DecodingKey> {
 }
 
 /// JWTのペイロード部分をデコードした検証されていないクレーム
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct UnverifiedClaims {
     /// 発行者（issuer）
     iss: String,
-    /// 購読者（audience）
-    aud: String,
     /// テナントID
     tid: Option<String>,
 }

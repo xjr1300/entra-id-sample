@@ -1,5 +1,5 @@
 use crate::{
-    common::{AppError, AppResult, ErrorBody},
+    common::{AppResult, RequestError},
     entra_id::extract_issuer_from_iss,
     handlers::extractors::AuthClaims,
     state::AppState,
@@ -33,10 +33,10 @@ pub async fn me(
     // テナントIDを取得
     let tenant_id = extract_issuer_from_iss(&claims.iss).map_err(|e| {
         tracing::error!(error = %e, "Failed to extract tenant ID from iss");
-        AppError::Handler(ErrorBody {
+        RequestError {
             code: StatusCode::UNAUTHORIZED,
             message: format!("Failed to extract tenant ID from iss: {e}"),
-        })
+        }
     })?;
 
     // OBOでGraph APIを呼び出すためのアクセストークンを取得
@@ -64,29 +64,32 @@ pub async fn me(
     let client = reqwest::Client::new();
     let response = client.post(&uri).form(&params).send().await.map_err(|e| {
         tracing::error!(error = %e, "Failed to request Graph API access token");
-        AppError::Handler(ErrorBody {
+        RequestError {
             code: StatusCode::BAD_GATEWAY,
             message: format!("Failed to request Graph API access token: {e}"),
-        })
+        }
     })?;
     if response.status().is_client_error() || response.status().is_server_error() {
         tracing::error!(status = %response.status(), "Graph API access token request returned error status");
-        let message = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Failed to read error body".into());
+        let message = response.text().await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to read Graph API access token error body");
+            RequestError {
+                code: StatusCode::BAD_GATEWAY,
+                message: format!("Failed to read Graph API access token error body: {e}"),
+            }
+        })?;
         tracing::error!(body = %message, "Graph API access token request error body");
-        return Err(AppError::Handler(ErrorBody {
+        return Err(RequestError {
             code: StatusCode::BAD_GATEWAY,
             message,
-        }));
+        });
     };
     let token_response = response.json::<TokenResponse>().await.map_err(|e| {
         tracing::error!(error = %e, "Failed to parse Graph API access token response");
-        AppError::Handler(ErrorBody {
+        RequestError {
             code: StatusCode::BAD_GATEWAY,
             message: format!("Failed to parse Graph API access token response: {e}"),
-        })
+        }
     })?;
 
     // Graph APIの呼び出し
@@ -97,18 +100,16 @@ pub async fn me(
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to call Graph API");
-            AppError::Handler(ErrorBody {
+            RequestError {
                 code: StatusCode::BAD_GATEWAY,
                 message: format!("Failed to call Graph API: {e}"),
-            })
+            }
         })?
         .json::<MeResponse>()
         .await
-        .map_err(|e| {
-            AppError::Handler(ErrorBody {
-                code: StatusCode::BAD_GATEWAY,
-                message: format!("Failed to parse Graph API response: {e}"),
-            })
+        .map_err(|e| RequestError {
+            code: StatusCode::BAD_GATEWAY,
+            message: format!("Failed to parse Graph API response: {e}"),
         })?;
 
     Ok((StatusCode::OK, axum::Json(response)).into_response())
