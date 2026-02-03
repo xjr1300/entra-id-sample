@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use axum::{Router, routing};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
+use tower_http::trace::TraceLayer;
 use tracing::subscriber::set_global_default;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -16,7 +16,7 @@ pub mod state;
 
 use crate::config::AppConfig;
 use crate::entra_id::EntraIdTokenVerifier;
-use crate::handlers::{health_check, me};
+use crate::handlers::create_routes;
 use crate::state::AppState;
 
 #[tokio::main]
@@ -57,7 +57,9 @@ async fn main() -> anyhow::Result<()> {
         token_verifier,
         client_credentials: app_config.client_credentials,
     };
-    let router = create_router(app_state.clone());
+    let router = create_routes(app_state.clone())
+        .with_state(app_state)
+        .layer(TraceLayer::new_for_http());
 
     tracing::info!("Starting the web server on port {}", app_config.web.port);
     let listener = TcpListener::bind(format!("0.0.0.0:{}", app_config.web.port)).await?;
@@ -124,26 +126,4 @@ async fn shutdown_signal(token: CancellationToken) {
 
     tracing::info!("Shutdown signal received");
     token.cancel();
-}
-
-fn create_router(app_state: AppState) -> Router {
-    Router::new().nest("/api", api_routes(app_state))
-}
-
-fn api_routes(app_state: AppState) -> Router {
-    Router::new()
-        .merge(unprotected_api_routes(app_state.clone()))
-        .merge(protected_api_routes(app_state.clone()))
-}
-
-fn unprotected_api_routes(app_state: AppState) -> Router {
-    Router::new()
-        .route("/health-check", routing::get(health_check))
-        .with_state(app_state)
-}
-
-fn protected_api_routes(app_state: AppState) -> Router {
-    Router::new()
-        .route("/me", routing::get(me))
-        .with_state(app_state)
 }

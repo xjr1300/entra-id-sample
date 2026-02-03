@@ -78,7 +78,7 @@ pub enum EntraIdError {
 }
 
 /// JWTのクレーム
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Claims {
     /// 購読者（audience）
     pub aud: String,

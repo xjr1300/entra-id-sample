@@ -1,6 +1,7 @@
 use crate::{
     common::{AppError, AppResult, ErrorBody},
-    entra_id::{BearerToken, extract_issuer_from_iss},
+    entra_id::extract_issuer_from_iss,
+    handlers::{extract_bearer_token, middleware::AuthClaims},
     state::AppState,
 };
 use axum::{
@@ -8,7 +9,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use secrecy::{ExposeSecret as _, SecretString};
+use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
 
 /// Entra IDのOBOで返されるGraph API用アクセストークンレスポンスの例
@@ -28,46 +29,14 @@ struct TokenResponse {
     // 他のフィールドは省略
 }
 
-/// フロントエンドからバックエンドへのアクセストークンがAuthorizationヘッダーに含まれている。
-///
-/// バックエンドからOBOでアクセストークンを取得する。
-///     https://learn.microsoft.com/ja-jp/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-access-token-with-a-certificate-credential
-/// request:
-///     POST https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token
-/// form-data:
-///     grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
-///     client_id=<backend-client-id>
-///     client_secret=<backend-client-secret>
-///     assertion=<frontendから来たアクセストークン>
-///     scope=https://graph.microsoft.com/User.Read
-///     requested_token_use=on_behalf_of
-///
-/// バックエンドからGraph APIを呼び出す。
-/// request:
-///     GET https://graph.microsoft.com/v1.0/me
-/// headers:
-///    Authorization: Bearer <access-token-from-obo>
-///
+#[tracing::instrument(skip(app_state, claims, headers))]
 pub async fn me(
     State(app_state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
     headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
-    // AuthorizationヘッダーからBearerトークンを抽出
-    // ここで得られるトークンは、バックエンドAPIを呼び出すためのアクセストークン
-    let token = extract_bearer_token(&headers)?;
-
-    // バックエンド用アクセストークンを検証
-    let claims = app_state
-        .token_verifier
-        .verify_token(&token)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Token verification failed");
-            AppError::Handler(ErrorBody {
-                code: StatusCode::UNAUTHORIZED,
-                message: format!("Token verification failed: {e}"),
-            })
-        })?;
+    // Bearerトークンを抽出
+    let token = extract_bearer_token(&headers).unwrap(); // ミドルウェアで既に検証済みなので安全にunwrapできる
 
     // テナントIDを取得
     let tenant_id = extract_issuer_from_iss(&claims.iss).map_err(|e| {
@@ -151,33 +120,6 @@ pub async fn me(
         })?;
 
     Ok((StatusCode::OK, axum::Json(response)).into_response())
-}
-
-fn extract_bearer_token(headers: &HeaderMap) -> AppResult<BearerToken> {
-    let auth_header = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .ok_or_else(|| {
-            AppError::Handler(ErrorBody {
-                code: StatusCode::UNAUTHORIZED,
-                message: "Authorization header not found".into(),
-            })
-        })?
-        .to_str()
-        .map_err(|e| {
-            AppError::Handler(ErrorBody {
-                code: StatusCode::UNAUTHORIZED,
-                message: format!("Invalid Authorization header: {e}"),
-            })
-        })?;
-
-    let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
-        AppError::Handler(ErrorBody {
-            code: StatusCode::UNAUTHORIZED,
-            message: "Bearer token not found".into(),
-        })
-    })?;
-
-    Ok(BearerToken(SecretString::new(token.into())))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
