@@ -409,7 +409,7 @@ impl EntraIdTokenVerifier {
 
         let now = Instant::now();
 
-        // 現在リフレッシュしている場合は待機して終了
+        // 現在リフレッシュしている場合は終了
         if state.refreshing {
             drop(states);
             return Ok(JwksCacheRefreshResult::Refreshing);

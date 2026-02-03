@@ -9,7 +9,7 @@ use axum::{
     response::IntoResponse,
 };
 use secrecy::{ExposeSecret as _, SecretString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Entra IDのOBOで返されるGraph API用アクセストークンレスポンスの例
 /// ```json
@@ -141,7 +141,7 @@ pub async fn me(
                 message: format!("Failed to call Graph API: {e}"),
             })
         })?
-        .json::<serde_json::Value>()
+        .json::<MeResponse>()
         .await
         .map_err(|e| {
             AppError::Handler(ErrorBody {
@@ -149,9 +149,8 @@ pub async fn me(
                 message: format!("Failed to parse Graph API response: {e}"),
             })
         })?;
-    tracing::info!("Graph API response: {:?}", response);
 
-    Ok("I am Taro!".into_response())
+    Ok((StatusCode::OK, axum::Json(response)).into_response())
 }
 
 fn extract_bearer_token(headers: &HeaderMap) -> AppResult<BearerToken> {
@@ -179,4 +178,20 @@ fn extract_bearer_token(headers: &HeaderMap) -> AppResult<BearerToken> {
     })?;
 
     Ok(BearerToken(SecretString::new(token.into())))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MeResponse {
+    id: String,
+    user_principal_name: Option<String>,
+    surname: Option<String>,
+    given_name: Option<String>,
+    display_name: Option<String>,
+    mail: Option<String>,
+    job_title: Option<String>,
+    office_location: Option<String>,
+    business_phones: Option<Vec<String>>,
+    mobile_phone: Option<String>,
+    preferred_language: Option<String>,
 }
