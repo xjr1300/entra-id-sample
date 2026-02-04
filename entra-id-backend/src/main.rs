@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::http::{HeaderName, Response};
 use axum::{body::Body, http::Request};
@@ -19,14 +19,18 @@ mod handlers;
 mod state;
 
 use crate::config::AppConfig;
-use crate::entra_id::EntraIdTokenVerifierBuilder;
+use crate::entra_id::{EntraIdTokenVerifier, EntraIdTokenVerifierBuilder};
 use crate::handlers::create_routes;
 use crate::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // アプリケーション設定の読み込み
     let app_config = AppConfig::load()?;
+    let web_server_port = app_config.web.port;
+    let client_credentials = app_config.client_credentials.clone();
 
+    // ログの設定
     LogTracer::init().map_err(|e| {
         tracing::error!(error = %e, "Failed to initialize LogTracer");
         e
@@ -36,44 +40,16 @@ async fn main() -> anyhow::Result<()> {
         tracing::error!(error = %e, "Failed to set global default subscriber");
         e
     })?;
-
     tracing::info!("Starting the application...");
 
     // Entra IDトークン検証者の構築
     let shutdown_token = CancellationToken::new();
-    let token_verifier = EntraIdTokenVerifierBuilder::default()
-        .tenants(app_config.entra_id.tenants.clone())?
-        .jwk_cache_ttl(Duration::from_secs(app_config.entra_id.jwk_cache_ttl))?
-        .refresh_jwks_interval(Duration::from_secs(
-            app_config.entra_id.refresh_jwks_interval,
-        ))?
-        .refresh_tenant_jwks_interval(Duration::from_secs(
-            app_config.entra_id.refresh_tenant_jwks_interval,
-        ))?
-        .entra_id_connection_timeout(Duration::from_secs(app_config.entra_id.connection_timeout))?
-        .entra_id_timeout(Duration::from_secs(app_config.entra_id.timeout))?
-        .jwks_request_max_attempts(app_config.entra_id.jwks_request_max_attempts)?
-        .jwks_request_retry_initial_wait(Duration::from_millis(
-            app_config.entra_id.jwks_request_retry_initial_wait,
-        ))
-        .jwks_request_retry_backoff_multiplier(
-            app_config.entra_id.jwks_request_retry_backoff_multiplier,
-        )?
-        .jwks_request_retry_max_wait(Duration::from_secs(
-            app_config.entra_id.jwks_request_retry_max_wait,
-        ))?
-        .shutdown(shutdown_token.clone())
-        .build()
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to initialize Entra ID Token Verifier service");
-            e
-        })?;
+    let token_verifier = build_token_verifier(app_config, shutdown_token.clone()).await?;
 
     // ルーターの作成
     let app_state = AppState {
         token_verifier,
-        client_credentials: app_config.client_credentials,
+        client_credentials,
     };
     let x_request_id = HeaderName::from_static("x-request-id");
     let router = create_routes()
@@ -86,8 +62,8 @@ async fn main() -> anyhow::Result<()> {
         .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid));
 
     // Webサーバーの起動
-    tracing::info!("Starting the web server on port {}", app_config.web.port);
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", app_config.web.port)).await?;
+    tracing::info!("Starting the web server on port {}", web_server_port);
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", web_server_port)).await?;
     axum::serve(listener, router)
         // `shutdown_signal`関数は、非同期関数であり`impl Future<Output = ()>`を返す。
         // したがって、axumは、`with_graceful_shutdown`で渡された`Future`が完了したとき、
@@ -126,6 +102,37 @@ fn create_subscriber(name: &str, level: &str) -> impl tracing::Subscriber + Send
         .with(env_filter)
         .with(JsonStorageLayer)
         .with(formatting_layer)
+}
+
+async fn build_token_verifier(
+    mut app_config: AppConfig,
+    shutdown_token: CancellationToken,
+) -> anyhow::Result<Arc<EntraIdTokenVerifier>> {
+    EntraIdTokenVerifierBuilder::default()
+        .tenants(std::mem::take(&mut app_config.entra_id.tenants))?
+        .jwk_cache_ttl(Duration::from_secs(app_config.entra_id.jwk_cache_ttl))?
+        .refresh_jwks_interval(Duration::from_secs(
+            app_config.entra_id.refresh_jwks_interval,
+        ))?
+        .refresh_tenant_jwks_interval(Duration::from_secs(
+            app_config.entra_id.refresh_tenant_jwks_interval,
+        ))?
+        .entra_id_connection_timeout(Duration::from_secs(app_config.entra_id.connection_timeout))?
+        .entra_id_timeout(Duration::from_secs(app_config.entra_id.timeout))?
+        .jwks_request_max_attempts(app_config.entra_id.jwks_request_max_attempts)?
+        .jwks_request_retry_initial_wait(Duration::from_millis(
+            app_config.entra_id.jwks_request_retry_initial_wait,
+        ))
+        .jwks_request_retry_backoff_multiplier(
+            app_config.entra_id.jwks_request_retry_backoff_multiplier,
+        )?
+        .jwks_request_retry_max_wait(Duration::from_secs(
+            app_config.entra_id.jwks_request_retry_max_wait,
+        ))?
+        .shutdown(shutdown_token)
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 /// シャットダウンシグナルを受け取るまで待機する非同期関数
