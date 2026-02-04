@@ -21,6 +21,10 @@ pub type EntraIdResult<T> = Result<T, EntraIdError>;
 /// Entra ID関連のエラー
 #[derive(Debug, thiserror::Error)]
 pub enum EntraIdError {
+    /// Entra IDトークン検証者の初期化に失敗
+    #[error("{0}")]
+    InitializeError(String),
+
     /// JWKsプロバイダの初期化に失敗
     #[error("Failed to initialize JWKs provider: {0}")]
     JwksProviderInitError(#[from] reqwest::Error),
@@ -327,7 +331,6 @@ impl JwksProvider {
                     if !retryable || attempts >= self.jwks_request_max_attempts {
                         return Err(EntraIdError::JwksFetchError(e, jwks_uri.clone()));
                     }
-                    tokio::time::sleep(delay).await;
                     // 試行回数に対して指数関数的に待機時間を増加させる（指数バックオフ）
                     let mut delay_millis = initial_millis * multiplier.powf((attempts - 1) as f64);
                     // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
@@ -343,6 +346,8 @@ impl JwksProvider {
                     delay_millis *= jitter;
                     delay = Duration::from_millis(delay_millis as u64)
                         .min(self.jwks_request_retry_max_wait);
+                    // リクエストの再試行を待機
+                    tokio::time::sleep(delay).await;
                 }
             }
         }
@@ -424,7 +429,8 @@ impl EntraIdTokenVerifier {
     /// * `jwks_request_retry_max_wait`
     ///    - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
     /// * `shutdown` - バックグラウンドタスクを停止するためのキャンセルトークン
-    pub async fn new(
+    #[allow(clippy::too_many_arguments)]
+    async fn new(
         tenants: Vec<Tenant>,
         jwk_cache_ttl: Duration,
         refresh_jwks_interval: Duration,
@@ -451,7 +457,7 @@ impl EntraIdTokenVerifier {
             jwks_request_retry_max_wait,
         )?;
 
-        let mut tenant_jwks_cach = TenantJwksCache::new();
+        let mut tenant_jwks_cache = TenantJwksCache::new();
         let mut tenant_refresh_states = HashMap::new();
         for (tenant_id, tenant) in &tenant_registry {
             // 初期化時はJWKs取得に失敗したら起動させない（fail-fast）
@@ -461,11 +467,11 @@ impl EntraIdTokenVerifier {
             for cached_jwk in cached_jwks {
                 cached_jwk_map.insert(Kid(cached_jwk.jwk.kid.clone()), cached_jwk);
             }
-            tenant_jwks_cach.insert(tenant_id.clone(), cached_jwk_map);
+            tenant_jwks_cache.insert(tenant_id.clone(), cached_jwk_map);
             tenant_refresh_states.insert(tenant_id.clone(), JwksCacheRefreshState::default());
         }
         let cache = JwksCache {
-            entries: RwLock::new(tenant_jwks_cach),
+            entries: RwLock::new(tenant_jwks_cache),
             ttl: jwk_cache_ttl,
             refresh_states: Mutex::new(tenant_refresh_states),
         };
@@ -645,8 +651,6 @@ impl EntraIdTokenVerifier {
         if last_refreshed_at.is_some() {
             state.last_refreshed_at = last_refreshed_at;
         }
-        // Notifyの使いまわしを避けて、新しいNotifyを作成
-        state.notify = Arc::new(Notify::new());
         result
     }
 
@@ -770,6 +774,270 @@ impl EntraIdTokenVerifier {
         let token_data = decode::<Claims>(token.0.expose_secret(), &decoding_key, &validation)
             .map_err(|_| EntraIdError::VerifyTokenError)?;
         Ok(token_data.claims)
+    }
+}
+
+/// Entra IDトークン検証者ビルダー
+#[derive(Default)]
+pub struct EntraIdTokenVerifierBuilder {
+    tenants: Option<Vec<Tenant>>,
+    jwk_cache_ttl: Option<Duration>,
+    refresh_jwks_interval: Option<Duration>,
+    refresh_tenant_jwks_interval: Option<Duration>,
+    entra_id_connection_timeout: Option<Duration>,
+    entra_id_timeout: Option<Duration>,
+    jwks_request_max_attempts: Option<u32>,
+    jwks_request_retry_initial_wait: Option<Duration>,
+    jwks_request_retry_backoff_multiplier: Option<f64>,
+    jwks_request_retry_max_wait: Option<Duration>,
+    shutdown: Option<CancellationToken>,
+}
+
+impl From<&str> for EntraIdError {
+    fn from(s: &str) -> Self {
+        EntraIdError::InitializeError(s.into())
+    }
+}
+
+impl EntraIdTokenVerifierBuilder {
+    /// テナントを設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `tenants` - テナントのリスト
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn tenants(mut self, tenants: Vec<Tenant>) -> EntraIdResult<Self> {
+        if tenants.is_empty() {
+            return Err("Tenants list cannot be empty".into());
+        }
+        self.tenants = Some(tenants);
+        Ok(self)
+    }
+
+    /// JWK公開鍵キャッシュのTTLを設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `ttl` - JWK公開鍵キャッシュのTTL
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn jwk_cache_ttl(mut self, ttl: Duration) -> EntraIdResult<Self> {
+        if ttl.is_zero() {
+            return Err("JWK cache TTL must be greater than zero".into());
+        }
+        self.jwk_cache_ttl = Some(ttl);
+        Ok(self)
+    }
+
+    /// 定期的にバックグラウンドですべてのテナントのJWK公開鍵をリフレッシュする間隔を設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `interval` - JWK公開鍵リフレッシュ間隔
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn refresh_jwks_interval(mut self, interval: Duration) -> EntraIdResult<Self> {
+        if interval.is_zero() {
+            return Err("Refresh JWKs interval must be greater than zero".into());
+        }
+        self.refresh_jwks_interval = Some(interval);
+        Ok(self)
+    }
+
+    /// テナントのJWK公開鍵がリフレッシュされてから、次にリフレッシュされるまでの最小時間を設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `interval` - テナントJWK公開鍵リフレッシュ最小間隔
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn refresh_tenant_jwks_interval(mut self, interval: Duration) -> EntraIdResult<Self> {
+        if interval.is_zero() {
+            return Err("Refresh tenant JWKs interval must be greater than zero".into());
+        }
+        self.refresh_tenant_jwks_interval = Some(interval);
+        Ok(self)
+    }
+
+    /// Entra IDのJWKsエンドポイントに接続する際のタイムアウトを設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - 接続タイムアウト
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn entra_id_connection_timeout(mut self, timeout: Duration) -> EntraIdResult<Self> {
+        if timeout.is_zero() {
+            return Err("Entra ID connection timeout must be greater than zero".into());
+        }
+        self.entra_id_connection_timeout = Some(timeout);
+        Ok(self)
+    }
+
+    /// Entra IDのJWKsエンドポイントからの応答を待つタイムアウトを設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - 応答待機タイムアウト
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn entra_id_timeout(mut self, timeout: Duration) -> EntraIdResult<Self> {
+        if timeout.is_zero() {
+            return Err("Entra ID timeout must be greater than zero".into());
+        }
+        self.entra_id_timeout = Some(timeout);
+        Ok(self)
+    }
+
+    /// Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数を設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `max_attempts` - 最大試行回数
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn jwks_request_max_attempts(mut self, max_attempts: u32) -> EntraIdResult<Self> {
+        if max_attempts == 0 {
+            return Err("JWKs request max attempts must be greater than zero".into());
+        }
+        self.jwks_request_max_attempts = Some(max_attempts);
+        Ok(self)
+    }
+
+    /// Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間を設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `initial_wait` - 最初の待機時間
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn jwks_request_retry_initial_wait(mut self, initial_wait: Duration) -> Self {
+        self.jwks_request_retry_initial_wait = Some(initial_wait);
+        self
+    }
+
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数を設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `multiplier` - 待機時間増加乗数
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn jwks_request_retry_backoff_multiplier(mut self, multiplier: f64) -> EntraIdResult<Self> {
+        if multiplier < 1.0 {
+            return Err("JWKs request retry backoff multiplier must be at least 1.0".into());
+        }
+        self.jwks_request_retry_backoff_multiplier = Some(multiplier);
+        Ok(self)
+    }
+
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間を設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `max_wait` - 最大待機時間
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn jwks_request_retry_max_wait(mut self, max_wait: Duration) -> EntraIdResult<Self> {
+        if max_wait.is_zero() {
+            return Err("JWKs request retry max wait must be greater than zero".into());
+        }
+        self.jwks_request_retry_max_wait = Some(max_wait);
+        Ok(self)
+    }
+
+    /// バックグラウンドタスクを停止するためのキャンセルトークンを設定する。
+    ///
+    /// # Arguments
+    ///
+    /// * `shutdown` - キャンセルトークン
+    ///
+    /// # Returns
+    ///
+    /// * 自身のインスタンス
+    pub fn shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = Some(shutdown);
+        self
+    }
+
+    /// Entra IDトークン検証者を構築する。
+    ///
+    /// # Returns
+    ///
+    /// * Entra IDトークン検証者、またはエラー
+    pub async fn build(self) -> EntraIdResult<Arc<EntraIdTokenVerifier>> {
+        let tenants = self
+            .tenants
+            .ok_or_else(|| EntraIdError::InitializeError("Tenants list is not set".into()))?;
+        let jwk_cache_ttl = self
+            .jwk_cache_ttl
+            .ok_or_else(|| EntraIdError::InitializeError("JWK cache TTL is not set".into()))?;
+        let refresh_jwks_interval = self.refresh_jwks_interval.ok_or_else(|| {
+            EntraIdError::InitializeError("Refresh JWKs interval is not set".into())
+        })?;
+        let refresh_tenant_jwks_interval = self.refresh_tenant_jwks_interval.ok_or_else(|| {
+            EntraIdError::InitializeError("Refresh tenant JWKs interval is not set".into())
+        })?;
+        let entra_id_connection_timeout = self.entra_id_connection_timeout.ok_or_else(|| {
+            EntraIdError::InitializeError("Entra ID connection timeout is not set".into())
+        })?;
+        let entra_id_timeout = self
+            .entra_id_timeout
+            .ok_or_else(|| EntraIdError::InitializeError("Entra ID timeout is not set".into()))?;
+        let jwks_request_max_attempts = self.jwks_request_max_attempts.ok_or_else(|| {
+            EntraIdError::InitializeError("JWKs request max attempts is not set".into())
+        })?;
+        let jwks_request_retry_initial_wait =
+            self.jwks_request_retry_initial_wait.ok_or_else(|| {
+                EntraIdError::InitializeError("JWKs request retry initial wait is not set".into())
+            })?;
+        let jwks_request_retry_backoff_multiplier =
+            self.jwks_request_retry_backoff_multiplier.ok_or_else(|| {
+                EntraIdError::InitializeError(
+                    "JWKs request retry backoff multiplier is not set".into(),
+                )
+            })?;
+        let jwks_request_retry_max_wait = self.jwks_request_retry_max_wait.ok_or_else(|| {
+            EntraIdError::InitializeError("JWKs request retry max wait is not set".into())
+        })?;
+        let shutdown = self
+            .shutdown
+            .ok_or_else(|| EntraIdError::InitializeError("Shutdown token is not set".into()))?;
+        EntraIdTokenVerifier::new(
+            tenants,
+            jwk_cache_ttl,
+            refresh_jwks_interval,
+            refresh_tenant_jwks_interval,
+            entra_id_connection_timeout,
+            entra_id_timeout,
+            jwks_request_max_attempts,
+            jwks_request_retry_initial_wait,
+            jwks_request_retry_backoff_multiplier,
+            jwks_request_retry_max_wait,
+            shutdown,
+        )
+        .await
     }
 }
 

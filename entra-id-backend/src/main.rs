@@ -19,7 +19,7 @@ mod handlers;
 mod state;
 
 use crate::config::AppConfig;
-use crate::entra_id::EntraIdTokenVerifier;
+use crate::entra_id::EntraIdTokenVerifierBuilder;
 use crate::handlers::create_routes;
 use crate::state::AppState;
 
@@ -41,35 +41,34 @@ async fn main() -> anyhow::Result<()> {
 
     // Entra IDトークン検証者の構築
     let shutdown_token = CancellationToken::new();
-    let token_verifier = EntraIdTokenVerifier::new(
-        // テナント
-        app_config.entra_id.tenants.clone(),
-        // JWKキャッシュのTTL（秒）
-        Duration::from_secs(app_config.entra_id.jwk_cache_ttl),
-        // 定期的にJWKsをリフレッシュする間隔（秒）
-        Duration::from_secs(app_config.entra_id.refresh_jwks_interval),
-        // テナントのJWKsをリフレッシュする最小間隔（秒）
-        Duration::from_secs(app_config.entra_id.refresh_tenant_jwks_interval),
-        // Entra IDのJWKsエンドポイントに接続する際のタイムアウト（秒）
-        Duration::from_secs(app_config.entra_id.connection_timeout),
-        // Entra IDのJWKsエンドポイントからの応答を待つタイムアウト（秒）
-        Duration::from_secs(app_config.entra_id.timeout),
-        // Entra IDのJWKsエンドポイントへにリクエストする再試行回数
-        app_config.entra_id.jwks_request_max_attempts,
-        // Entra IDのJWKsエンドポイントへにリクエストする再試行の待機時間（ミリ秒）
-        Duration::from_millis(app_config.entra_id.jwks_request_retry_initial_wait),
-        // Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
-        app_config.entra_id.jwks_request_retry_backoff_multiplier,
-        // Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間（秒）
-        Duration::from_secs(app_config.entra_id.jwks_request_retry_max_wait),
-        // シャットダウン用トークン
-        shutdown_token.clone(),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to initialize Entra ID Token Verifier service");
-        e
-    })?;
+    let token_verifier = EntraIdTokenVerifierBuilder::default()
+        .tenants(app_config.entra_id.tenants.clone())?
+        .jwk_cache_ttl(Duration::from_secs(app_config.entra_id.jwk_cache_ttl))?
+        .refresh_jwks_interval(Duration::from_secs(
+            app_config.entra_id.refresh_jwks_interval,
+        ))?
+        .refresh_tenant_jwks_interval(Duration::from_secs(
+            app_config.entra_id.refresh_tenant_jwks_interval,
+        ))?
+        .entra_id_connection_timeout(Duration::from_secs(app_config.entra_id.connection_timeout))?
+        .entra_id_timeout(Duration::from_secs(app_config.entra_id.timeout))?
+        .jwks_request_max_attempts(app_config.entra_id.jwks_request_max_attempts)?
+        .jwks_request_retry_initial_wait(Duration::from_millis(
+            app_config.entra_id.jwks_request_retry_initial_wait,
+        ))
+        .jwks_request_retry_backoff_multiplier(
+            app_config.entra_id.jwks_request_retry_backoff_multiplier,
+        )?
+        .jwks_request_retry_max_wait(Duration::from_secs(
+            app_config.entra_id.jwks_request_retry_max_wait,
+        ))?
+        .shutdown(shutdown_token.clone())
+        .build()
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to initialize Entra ID Token Verifier service");
+            e
+        })?;
 
     // ルーターの作成
     let app_state = AppState {
