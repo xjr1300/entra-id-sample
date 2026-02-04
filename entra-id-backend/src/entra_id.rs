@@ -4,6 +4,11 @@ use std::time::{Duration, Instant};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use rand::{
+    SeedableRng as _,
+    distr::{Distribution as _, Uniform},
+    rngs::SmallRng,
+};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify, RwLock};
@@ -186,16 +191,57 @@ type CachedJwkMap = HashMap<Kid, CachedJwk>;
 /// テナントをキー、JWK公開鍵セットを値としたハッシュマップ
 type TenantJwksCache = HashMap<TenantId, CachedJwkMap>;
 
-/// テナントごとにキャッシュしたJWK公開鍵セットを提供
+/// Entra IDから取得したJWS公開鍵セットを提供
 #[derive(Clone)]
 struct JwksProvider {
+    /// HTTPクライアント
     client: reqwest::Client,
+
+    /// Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
+    jwks_request_max_attempts: u32,
+
+    /// Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間
+    jwks_request_retry_initial_wait: Duration,
+
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
+    /// 待機時間は、initial_wait * (multiplier ^ (attempt_number - 1))で計算される
+    /// 指数バックオフ
+    jwks_request_retry_backoff_multiplier: f64,
+
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
+    jwks_request_retry_max_wait: Duration,
 }
 
 /// JWK公開鍵セットのレスポンス
 #[derive(Deserialize)]
 struct JwksResponse {
     keys: Vec<Jwk>,
+}
+
+/// 再試行可能なエラーかどうかを判定する。
+///
+/// タイムアウト、接続エラー、サーバーエラー、レートリミットエラーは再試行可能とみなす。
+/// 上記以外は、再試行不可能とみなす。
+///
+/// # Arguments
+///
+/// * `err` - reqwestのエラー
+///
+/// # Returns
+///
+/// 再試行可能なエラーであればtrue、そうでなければfalse
+fn is_retryable_error(e: &reqwest::Error) -> bool {
+    if e.is_timeout() {
+        return true;
+    }
+    if e.is_connect() {
+        return true;
+    }
+    match e.status() {
+        Some(status) if status.is_server_error() => true,
+        Some(status) if status == reqwest::StatusCode::TOO_MANY_REQUESTS => true,
+        _ => false,
+    }
 }
 
 impl JwksProvider {
@@ -205,14 +251,35 @@ impl JwksProvider {
     ///
     /// * `connection_timeout` - Entra IDのJWKsエンドポイントに接続する際のタイムアウト
     /// * `timeout` - Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
-    fn new(connection_timeout: Duration, timeout: Duration) -> EntraIdResult<Self> {
+    /// * `jwks_request_max_attempts`
+    ///     - Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
+    /// * `jwks_request_retry_initial_wait`
+    ///     - Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間
+    /// * `jwks_request_retry_backoff_multiplier`
+    ///     - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
+    /// * `jwks_request_retry_max_wait`
+    ///     - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
+    fn new(
+        connection_timeout: Duration,
+        timeout: Duration,
+        jwks_request_max_attempts: u32,
+        jwks_request_retry_initial_wait: Duration,
+        jwks_request_retry_backoff_multiplier: f64,
+        jwks_request_retry_max_wait: Duration,
+    ) -> EntraIdResult<Self> {
         let builder = reqwest::Client::builder()
             .connect_timeout(connection_timeout)
             .timeout(timeout);
         let client = builder
             .build()
             .map_err(EntraIdError::JwksProviderInitError)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            jwks_request_max_attempts,
+            jwks_request_retry_initial_wait,
+            jwks_request_retry_backoff_multiplier,
+            jwks_request_retry_max_wait,
+        })
     }
 
     /// 指定したJWKsエンドポイントからJWK公開鍵セットを取得する。
@@ -225,18 +292,59 @@ impl JwksProvider {
     ///
     /// * JWK公開鍵セット
     async fn fetch_jwks(&self, jwks_uri: &Url) -> EntraIdResult<JwksResponse> {
-        let response = self
-            .client
-            .get(jwks_uri.to_string())
-            .send()
-            .await
-            .map_err(|e| EntraIdError::JwksFetchError(e, jwks_uri.clone()))?;
-        match response.error_for_status() {
-            Ok(response) => response
-                .json::<JwksResponse>()
+        let mut delay = self
+            .jwks_request_retry_initial_wait
+            .min(self.jwks_request_retry_max_wait);
+        let initial_millis = self.jwks_request_retry_initial_wait.as_millis() as f64;
+
+        let mut attempts = 0;
+        let multiplier = self.jwks_request_retry_backoff_multiplier;
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
+        let jitter_dist = Uniform::new(0.8, 1.2);
+
+        loop {
+            attempts += 1;
+            let response = self
+                .client
+                .get(jwks_uri.clone())
+                .send()
                 .await
-                .map_err(|e| EntraIdError::JwksResponseParseError(jwks_uri.clone(), e)),
-            Err(e) => Err(EntraIdError::JwksFetchError(e, jwks_uri.clone())),
+                .map_err(|e| EntraIdError::JwksFetchError(e, jwks_uri.clone()))?;
+            match response.error_for_status() {
+                Ok(response) => {
+                    return response
+                        .json::<JwksResponse>()
+                        .await
+                        .map_err(|e| EntraIdError::JwksResponseParseError(jwks_uri.clone(), e));
+                }
+                Err(e) => {
+                    let retryable = is_retryable_error(&e);
+                    tracing::warn!(
+                        error = %e, attempts = %attempts, delay_ms = %delay.as_millis(),
+                        "Failed to fetch JWKs from {}, retryable: {}, max attempts: {}",
+                        jwks_uri, retryable, self.jwks_request_max_attempts
+                    );
+                    if !retryable || attempts >= self.jwks_request_max_attempts {
+                        return Err(EntraIdError::JwksFetchError(e, jwks_uri.clone()));
+                    }
+                    tokio::time::sleep(delay).await;
+                    // 試行回数に対して指数関数的に待機時間を増加させる（指数バックオフ）
+                    let mut delay_millis = initial_millis * multiplier.powf((attempts - 1) as f64);
+                    // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
+                    let jitter: f64 = match jitter_dist {
+                        Ok(dist) => dist.sample(&mut rng),
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e, "Failed to create jitter distribution, skipping jitter application"
+                            );
+                            1.0
+                        }
+                    };
+                    delay_millis *= jitter;
+                    delay = Duration::from_millis(delay_millis as u64)
+                        .min(self.jwks_request_retry_max_wait);
+                }
+            }
         }
     }
 }
@@ -307,6 +415,14 @@ impl EntraIdTokenVerifier {
     ///     次にリフレッシュするまでの最小時間
     /// * `entra_id_connection_timeout` - Entra IDのJWKsエンドポイントに接続する際のタイムアウト
     /// * `entra_id_timeout` - Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
+    /// * `jwks_request_max_attempts`
+    ///     - Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
+    /// * `jwks_request_retry_initial_wait`
+    ///     - Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間
+    /// * `jwks_request_retry_backoff_multiplier`
+    ///     - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
+    /// * `jwks_request_retry_max_wait`
+    ///    - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
     /// * `shutdown` - バックグラウンドタスクを停止するためのキャンセルトークン
     pub async fn new(
         tenants: Vec<Tenant>,
@@ -315,6 +431,10 @@ impl EntraIdTokenVerifier {
         refresh_tenant_jwks_interval: Duration,
         entra_id_connection_timeout: Duration,
         entra_id_timeout: Duration,
+        jwks_request_max_attempts: u32,
+        jwks_request_retry_initial_wait: Duration,
+        jwks_request_retry_backoff_multiplier: f64,
+        jwks_request_retry_max_wait: Duration,
         shutdown: CancellationToken,
     ) -> EntraIdResult<Arc<Self>> {
         let mut tenant_registry = TenantRegistry::new();
@@ -322,7 +442,14 @@ impl EntraIdTokenVerifier {
             tenant_registry.insert(tenant.id.clone(), tenant);
         }
 
-        let provider = JwksProvider::new(entra_id_connection_timeout, entra_id_timeout)?;
+        let provider = JwksProvider::new(
+            entra_id_connection_timeout,
+            entra_id_timeout,
+            jwks_request_max_attempts,
+            jwks_request_retry_initial_wait,
+            jwks_request_retry_backoff_multiplier,
+            jwks_request_retry_max_wait,
+        )?;
 
         let mut tenant_jwks_cach = TenantJwksCache::new();
         let mut tenant_refresh_states = HashMap::new();

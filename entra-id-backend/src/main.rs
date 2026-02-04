@@ -44,16 +44,24 @@ async fn main() -> anyhow::Result<()> {
     let token_verifier = EntraIdTokenVerifier::new(
         // テナント
         app_config.entra_id.tenants.clone(),
-        // JWKキャッシュのTTL
+        // JWKキャッシュのTTL（秒）
         Duration::from_secs(app_config.entra_id.jwk_cache_ttl),
-        // 定期的にJWKsをリフレッシュする間隔
+        // 定期的にJWKsをリフレッシュする間隔（秒）
         Duration::from_secs(app_config.entra_id.refresh_jwks_interval),
-        // テナントのJWKsをリフレッシュする最小間隔
+        // テナントのJWKsをリフレッシュする最小間隔（秒）
         Duration::from_secs(app_config.entra_id.refresh_tenant_jwks_interval),
-        // Entra IDのJWKsエンドポイントに接続する際のタイムアウト
+        // Entra IDのJWKsエンドポイントに接続する際のタイムアウト（秒）
         Duration::from_secs(app_config.entra_id.connection_timeout),
-        // Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
+        // Entra IDのJWKsエンドポイントからの応答を待つタイムアウト（秒）
         Duration::from_secs(app_config.entra_id.timeout),
+        // Entra IDのJWKsエンドポイントへにリクエストする再試行回数
+        app_config.entra_id.jwks_request_max_attempts,
+        // Entra IDのJWKsエンドポイントへにリクエストする再試行の待機時間（ミリ秒）
+        Duration::from_millis(app_config.entra_id.jwks_request_retry_initial_wait),
+        // Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
+        app_config.entra_id.jwks_request_retry_backoff_multiplier,
+        // Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間（秒）
+        Duration::from_secs(app_config.entra_id.jwks_request_retry_max_wait),
         // シャットダウン用トークン
         shutdown_token.clone(),
     )

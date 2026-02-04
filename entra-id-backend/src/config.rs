@@ -59,6 +59,21 @@ pub struct EntraIdConfig {
 
     /// Entra IDのJWKsエンドポイントからの応答を待つタイムアウト（秒）
     pub timeout: u64,
+
+    /// Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
+    pub jwks_request_max_attempts: u32,
+
+    /// Entra IDのJWKsエンドポイントへにリクエストする再試行の待機時間（ミリ秒）
+    pub jwks_request_retry_initial_wait: u64,
+
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
+    ///
+    /// 待機時間は、`initial_wait * (multiplier ^ (attempt_number - 1))`で計算される
+    /// 指数バックオフとなる。
+    pub jwks_request_retry_backoff_multiplier: f64,
+
+    ///Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間（秒）
+    pub jwks_request_retry_max_wait: u64,
 }
 
 #[derive(Clone, Deserialize)]
