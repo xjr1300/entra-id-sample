@@ -4,15 +4,16 @@ use std::time::{Duration, Instant};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
-use rand::{
-    distr::{Distribution as _, Uniform},
-    rngs::ThreadRng,
-};
+use rand::distr::{Distribution as _, Uniform};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 use url::Url;
+
+const JITTER_MIN: f64 = 0.8;
+const JITTER_MAX: f64 = 1.2;
+const JWT_PARTS_COUNT: usize = 3;
 
 /// Entra ID関連の処理の結果型
 pub type EntraIdResult<T> = Result<T, EntraIdError>;
@@ -45,7 +46,7 @@ pub enum EntraIdError {
     TenantNotFound(TenantId),
 
     /// トークンのヘッダのデコードに失敗
-    #[error("Failed to decodeJWT header:{0}")]
+    #[error("Failed to decode JWT header:{0}")]
     TokenHeaderDecodeError(#[from] jsonwebtoken::errors::Error),
 
     /// トークンのヘッダにkidが存在しない
@@ -253,12 +254,11 @@ impl RetryConfig {
         })
     }
 
-    fn calculation_delay(&mut self, attempts: u32) -> Duration {
+    fn calculation_delay(&self, attempts: u32) -> Duration {
         let mut delay_millis = self.initial_wait.as_millis() as f64
             * self.backoff_multiplier.powf((attempts - 1) as f64);
         // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
-        let mut rng = ThreadRng::default();
-        let jitter: f64 = self.jitter_dist.sample(&mut rng);
+        let jitter: f64 = self.jitter_dist.sample(&mut rand::rng());
         delay_millis *= jitter;
         Duration::from_millis(delay_millis as u64).min(self.max_wait)
     }
@@ -296,9 +296,6 @@ fn is_retryable_error(e: &reqwest::Error) -> bool {
     }
 }
 
-const JITTER_MIN: f64 = 0.8;
-const JITTER_MAX: f64 = 1.2;
-
 impl JwksProvider {
     /// コンストラクタ
     ///
@@ -306,14 +303,7 @@ impl JwksProvider {
     ///
     /// * `connection_timeout` - Entra IDのJWKsエンドポイントに接続する際のタイムアウト
     /// * `timeout` - Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
-    /// * `jwks_request_max_attempts`
-    ///     - Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
-    /// * `jwks_request_retry_initial_wait`
-    ///     - Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間
-    /// * `jwks_request_retry_backoff_multiplier`
-    ///     - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
-    /// * `jwks_request_retry_max_wait`
-    ///     - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
+    /// * `retry_config` - Entra IDのJWKsエンドポイントからJWK公開鍵セットを取得する際の再試行設定
     fn new(
         connection_timeout: Duration,
         timeout: Duration,
@@ -370,7 +360,7 @@ impl JwksProvider {
                         return Err(EntraIdError::JwksFetchError(e, jwks_uri.clone()));
                     }
                     // 試行回数に対して指数関数的に待機時間を増加させる（指数バックオフ）
-                    delay = self.retry_config.clone().calculation_delay(attempts);
+                    delay = self.retry_config.calculation_delay(attempts);
                     // リクエストの再試行を待機
                     tokio::time::sleep(delay).await;
                 }
@@ -389,7 +379,7 @@ struct JwksCacheRefreshState {
     notify: Arc<Notify>,
 }
 
-impl JwksCacheRefreshState {
+impl Default for JwksCacheRefreshState {
     fn default() -> Self {
         Self {
             last_refreshed_at: None,
@@ -445,14 +435,7 @@ impl EntraIdTokenVerifier {
     ///     次にリフレッシュするまでの最小時間
     /// * `entra_id_connection_timeout` - Entra IDのJWKsエンドポイントに接続する際のタイムアウト
     /// * `entra_id_timeout` - Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
-    /// * `jwks_request_max_attempts`
-    ///     - Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
-    /// * `jwks_request_retry_initial_wait`
-    ///     - Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間
-    /// * `jwks_request_retry_backoff_multiplier`
-    ///     - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
-    /// * `jwks_request_retry_max_wait`
-    ///    - Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
+    /// * `retry_config` - Entra IDのJWKsエンドポイントからJWK公開鍵セットを取得する際の再試行設定
     /// * `shutdown` - バックグラウンドタスクを停止するためのキャンセルトークン
     #[allow(clippy::too_many_arguments)]
     async fn new(
@@ -1020,8 +1003,6 @@ struct UnverifiedClaims {
     /// テナントID
     tid: Option<String>,
 }
-
-const JWT_PARTS_COUNT: usize = 3;
 
 /// JWTのペイロード部分をデコードして検証されていないクレームを抽出する。
 fn extract_payload(token: &BearerToken) -> EntraIdResult<UnverifiedClaims> {
