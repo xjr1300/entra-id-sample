@@ -1,13 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use rand::{
-    SeedableRng as _,
     distr::{Distribution as _, Uniform},
-    rngs::SmallRng,
+    rngs::ThreadRng,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -216,8 +215,6 @@ pub struct RetryConfig {
     backoff_multiplier: f64,
     /// 最大待機時間
     max_wait: Duration,
-    /// 乱数生成器
-    rng: Arc<StdMutex<SmallRng>>,
     /// ジッター分布
     jitter_dist: Uniform<f64>,
 }
@@ -244,7 +241,6 @@ impl RetryConfig {
             initial_wait,
             backoff_multiplier,
             max_wait,
-            rng: Arc::new(StdMutex::new(SmallRng::from_rng(&mut rand::rng()))),
             jitter_dist: Uniform::new(JITTER_MIN, JITTER_MAX).map_err(|e| {
                 tracing::warn!(
                     error = %e, "Failed to create jitter distribution, using default values"
@@ -261,16 +257,8 @@ impl RetryConfig {
         let mut delay_millis = self.initial_wait.as_millis() as f64
             * self.backoff_multiplier.powf((attempts - 1) as f64);
         // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
-        let jitter: f64 = match self.rng.lock() {
-            Ok(ref mut rng) => self.jitter_dist.sample(rng),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to lock RNG mutex, using default jitter value"
-                );
-                JITTER_DEFAULT
-            }
-        };
+        let mut rng = ThreadRng::default();
+        let jitter: f64 = self.jitter_dist.sample(&mut rng);
         delay_millis *= jitter;
         Duration::from_millis(delay_millis as u64).min(self.max_wait)
     }
@@ -310,7 +298,6 @@ fn is_retryable_error(e: &reqwest::Error) -> bool {
 
 const JITTER_MIN: f64 = 0.8;
 const JITTER_MAX: f64 = 1.2;
-const JITTER_DEFAULT: f64 = 1.0;
 
 impl JwksProvider {
     /// コンストラクタ
