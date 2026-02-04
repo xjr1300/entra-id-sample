@@ -16,9 +16,13 @@ pub type EntraIdResult<T> = Result<T, EntraIdError>;
 /// Entra ID関連のエラー
 #[derive(Debug, thiserror::Error)]
 pub enum EntraIdError {
+    /// JWKsプロバイダの初期化に失敗
+    #[error("Failed to initialize JWKs provider: {0}")]
+    JwksProviderInitError(#[from] reqwest::Error),
+
     /// 指定したテナントのJWK公開鍵セットの取得に失敗
-    #[error("Failed to fetch JWKs from {0}")]
-    JwksFetchError(Url),
+    #[error("Failed to fetch JWKs from {1}: {0}")]
+    JwksFetchError(reqwest::Error, Url),
 
     #[error("Failed to parse JWKS from {0}: {1}")]
     /// JWK公開鍵セットのパースに失敗
@@ -195,23 +199,45 @@ struct JwksResponse {
 }
 
 impl JwksProvider {
-    fn default() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
+    /// コンストラクタ
+    ///
+    /// # Arguments
+    ///
+    /// * `connection_timeout` - Entra IDのJWKsエンドポイントに接続する際のタイムアウト
+    /// * `timeout` - Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
+    fn new(connection_timeout: Duration, timeout: Duration) -> EntraIdResult<Self> {
+        let builder = reqwest::Client::builder()
+            .connect_timeout(connection_timeout)
+            .timeout(timeout);
+        let client = builder
+            .build()
+            .map_err(EntraIdError::JwksProviderInitError)?;
+        Ok(Self { client })
     }
 
-    async fn fetch(&self, jwks_uri: &Url) -> EntraIdResult<JwksResponse> {
+    /// 指定したJWKsエンドポイントからJWK公開鍵セットを取得する。
+    ///
+    /// # Arguments
+    ///
+    /// * `jwks_uri` - JWKsエンドポイントのURI
+    ///
+    /// # Returns
+    ///
+    /// * JWK公開鍵セット
+    async fn fetch_jwks(&self, jwks_uri: &Url) -> EntraIdResult<JwksResponse> {
         let response = self
             .client
             .get(jwks_uri.to_string())
             .send()
             .await
-            .map_err(|_| EntraIdError::JwksFetchError(jwks_uri.clone()))?;
-        response
-            .json::<JwksResponse>()
-            .await
-            .map_err(|e| EntraIdError::JwksResponseParseError(jwks_uri.clone(), e))
+            .map_err(|e| EntraIdError::JwksFetchError(e, jwks_uri.clone()))?;
+        match response.error_for_status() {
+            Ok(response) => response
+                .json::<JwksResponse>()
+                .await
+                .map_err(|e| EntraIdError::JwksResponseParseError(jwks_uri.clone(), e)),
+            Err(e) => Err(EntraIdError::JwksFetchError(e, jwks_uri.clone())),
+        }
     }
 }
 
@@ -274,17 +300,21 @@ impl EntraIdTokenVerifier {
     /// # Arguments
     ///
     /// * `tenants` - テナントのリスト
-    /// * `jwk_cache_ttl` - キャッシュしたJWK公開鍵のTTL（秒）
+    /// * `jwk_cache_ttl` - キャッシュしたJWK公開鍵のTTL
     /// * `refresh_jwks_interval` - 定期的にバックグラウンドですべてのテナントのJWK公開鍵をリフレッシュする間隔（秒）
     /// * `refresh_tenant_jwks_interval`
     ///   - kidを基にテナントのJWK公開鍵を得られなかったときに、そのテナントのJWK公開鍵が最後にリフレッシュされてから、
-    ///     次にリフレッシュするまでの最小時間（秒）
+    ///     次にリフレッシュするまでの最小時間
+    /// * `entra_id_connection_timeout` - Entra IDのJWKsエンドポイントに接続する際のタイムアウト
+    /// * `entra_id_timeout` - Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
     /// * `shutdown` - バックグラウンドタスクを停止するためのキャンセルトークン
     pub async fn new(
         tenants: Vec<Tenant>,
         jwk_cache_ttl: Duration,
         refresh_jwks_interval: Duration,
         refresh_tenant_jwks_interval: Duration,
+        entra_id_connection_timeout: Duration,
+        entra_id_timeout: Duration,
         shutdown: CancellationToken,
     ) -> EntraIdResult<Arc<Self>> {
         let mut tenant_registry = TenantRegistry::new();
@@ -292,13 +322,13 @@ impl EntraIdTokenVerifier {
             tenant_registry.insert(tenant.id.clone(), tenant);
         }
 
-        let provider = JwksProvider::default();
+        let provider = JwksProvider::new(entra_id_connection_timeout, entra_id_timeout)?;
 
         let mut tenant_jwks_cach = TenantJwksCache::new();
         let mut tenant_refresh_states = HashMap::new();
         for (tenant_id, tenant) in &tenant_registry {
             // 初期化時はJWKs取得に失敗したら起動させない（fail-fast）
-            let jwks = provider.fetch(&tenant.uri).await?;
+            let jwks = provider.fetch_jwks(&tenant.uri).await?;
             let cached_jwks: Vec<CachedJwk> = jwks.keys.into_iter().map(|key| key.into()).collect();
             let mut cached_jwk_map = CachedJwkMap::new();
             for cached_jwk in cached_jwks {
@@ -401,7 +431,7 @@ impl EntraIdTokenVerifier {
             .ok_or_else(|| EntraIdError::TenantNotFound(tenant_id.clone()))?;
 
         // テナントのJWK公開鍵をフェッチ
-        let fetched = self.provider.fetch(&tenant.uri).await?;
+        let fetched = self.provider.fetch_jwks(&tenant.uri).await?;
 
         // 取得したJWK公開鍵が、既存のキャッシュに存在するかを確認し、存在する場合は`last_seen_at`を更新し、
         // 存在しない場合はキャッシュに追加

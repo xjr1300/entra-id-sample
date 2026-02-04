@@ -50,6 +50,10 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(app_config.entra_id.refresh_jwks_interval),
         // テナントのJWKsをリフレッシュする最小間隔
         Duration::from_secs(app_config.entra_id.refresh_tenant_jwks_interval),
+        // Entra IDのJWKsエンドポイントに接続する際のタイムアウト
+        Duration::from_secs(app_config.entra_id.connection_timeout),
+        // Entra IDのJWKsエンドポイントからの応答を待つタイムアウト
+        Duration::from_secs(app_config.entra_id.timeout),
         // シャットダウン用トークン
         shutdown_token.clone(),
     )

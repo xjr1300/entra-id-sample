@@ -53,6 +53,12 @@ pub struct EntraIdConfig {
     /// kidを基にテナントのJWK公開鍵を得られなかったときに、そのテナントのJWK公開鍵が最後にリフレッシュされてから、
     /// 次にリフレッシュするまでの最小時間（秒）
     pub refresh_tenant_jwks_interval: u64,
+
+    /// Entra IDのJWKsエンドポイントに接続する際のタイムアウト（秒）
+    pub connection_timeout: u64,
+
+    /// Entra IDのJWKsエンドポイントからの応答を待つタイムアウト（秒）
+    pub timeout: u64,
 }
 
 #[derive(Clone, Deserialize)]
