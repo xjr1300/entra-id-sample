@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -27,7 +27,7 @@ pub enum EntraIdError {
 
     /// JWKsプロバイダの初期化に失敗
     #[error("Failed to initialize JWKs provider: {0}")]
-    JwksProviderInitError(#[from] reqwest::Error),
+    JwksProviderInitError(String),
 
     /// 指定したテナントのJWK公開鍵セットの取得に失敗
     #[error("Failed to fetch JWKs from {1}: {0}")]
@@ -201,19 +201,79 @@ struct JwksProvider {
     /// HTTPクライアント
     client: reqwest::Client,
 
-    /// Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数
-    jwks_request_max_attempts: u32,
+    /// Entra IDからJWKsを取得する際の再試行設定
+    retry_config: RetryConfig,
+}
 
-    /// Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間
-    jwks_request_retry_initial_wait: Duration,
+/// 再試行設定
+#[derive(Clone)]
+pub struct RetryConfig {
+    /// 最大試行回数
+    max_attempts: u32,
+    /// 最初の待機時間
+    initial_wait: Duration,
+    /// 待機時間の増加乗数
+    backoff_multiplier: f64,
+    /// 最大待機時間
+    max_wait: Duration,
+    /// 乱数生成器
+    rng: Arc<StdMutex<SmallRng>>,
+    /// ジッター分布
+    jitter_dist: Uniform<f64>,
+}
 
-    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数
-    /// 待機時間は、initial_wait * (multiplier ^ (attempt_number - 1))で計算される
-    /// 指数バックオフ
-    jwks_request_retry_backoff_multiplier: f64,
+impl RetryConfig {
+    pub fn new(
+        max_attempts: u32,
+        initial_wait: Duration,
+        backoff_multiplier: f64,
+        max_wait: Duration,
+    ) -> EntraIdResult<Self> {
+        if max_attempts == 0 {
+            return Err("JWKs request max attempts must be greater than zero".into());
+        }
+        if backoff_multiplier < 1.0 {
+            return Err("JWKs request retry backoff multiplier must be at least 1.0".into());
+        }
+        if max_wait.is_zero() {
+            return Err("JWKs request retry max wait must be greater than zero".into());
+        }
 
-    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間
-    jwks_request_retry_max_wait: Duration,
+        Ok(Self {
+            max_attempts,
+            initial_wait,
+            backoff_multiplier,
+            max_wait,
+            rng: Arc::new(StdMutex::new(SmallRng::from_rng(&mut rand::rng()))),
+            jitter_dist: Uniform::new(JITTER_MIN, JITTER_MAX).map_err(|e| {
+                tracing::warn!(
+                    error = %e, "Failed to create jitter distribution, using default values"
+                );
+                EntraIdError::JwksProviderInitError(format!(
+                    "Failed to create jitter distribution: {}",
+                    e
+                ))
+            })?,
+        })
+    }
+
+    fn calculation_delay(&mut self, attempts: u32) -> Duration {
+        let mut delay_millis = self.initial_wait.as_millis() as f64
+            * self.backoff_multiplier.powf((attempts - 1) as f64);
+        // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
+        let jitter: f64 = match self.rng.lock() {
+            Ok(ref mut rng) => self.jitter_dist.sample(rng),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to lock RNG mutex, using default jitter value"
+                );
+                JITTER_DEFAULT
+            }
+        };
+        delay_millis *= jitter;
+        Duration::from_millis(delay_millis as u64).min(self.max_wait)
+    }
 }
 
 /// JWK公開鍵セットのレスポンス
@@ -270,23 +330,17 @@ impl JwksProvider {
     fn new(
         connection_timeout: Duration,
         timeout: Duration,
-        jwks_request_max_attempts: u32,
-        jwks_request_retry_initial_wait: Duration,
-        jwks_request_retry_backoff_multiplier: f64,
-        jwks_request_retry_max_wait: Duration,
+        retry_config: RetryConfig,
     ) -> EntraIdResult<Self> {
         let builder = reqwest::Client::builder()
             .connect_timeout(connection_timeout)
             .timeout(timeout);
         let client = builder
             .build()
-            .map_err(EntraIdError::JwksProviderInitError)?;
+            .map_err(|e| EntraIdError::JwksProviderInitError(e.to_string()))?;
         Ok(Self {
             client,
-            jwks_request_max_attempts,
-            jwks_request_retry_initial_wait,
-            jwks_request_retry_backoff_multiplier,
-            jwks_request_retry_max_wait,
+            retry_config,
         })
     }
 
@@ -300,15 +354,8 @@ impl JwksProvider {
     ///
     /// * JWK公開鍵セット
     async fn fetch_jwks(&self, jwks_uri: &Url) -> EntraIdResult<JwksResponse> {
-        let mut delay = self
-            .jwks_request_retry_initial_wait
-            .min(self.jwks_request_retry_max_wait);
-        let initial_millis = self.jwks_request_retry_initial_wait.as_millis() as f64;
-
         let mut attempts = 0;
-        let multiplier = self.jwks_request_retry_backoff_multiplier;
-        let mut rng = SmallRng::from_rng(&mut rand::rng());
-        let jitter_dist = Uniform::new(JITTER_MIN, JITTER_MAX);
+        let mut delay = self.retry_config.initial_wait;
 
         loop {
             attempts += 1;
@@ -330,26 +377,13 @@ impl JwksProvider {
                     tracing::warn!(
                         error = %e, attempts = %attempts, delay_ms = %delay.as_millis(),
                         "Failed to fetch JWKs from {}, retryable: {}, max attempts: {}",
-                        jwks_uri, retryable, self.jwks_request_max_attempts
+                        jwks_uri, retryable, self.retry_config.max_attempts
                     );
-                    if !retryable || attempts >= self.jwks_request_max_attempts {
+                    if !retryable || attempts >= self.retry_config.max_attempts {
                         return Err(EntraIdError::JwksFetchError(e, jwks_uri.clone()));
                     }
                     // 試行回数に対して指数関数的に待機時間を増加させる（指数バックオフ）
-                    let mut delay_millis = initial_millis * multiplier.powf((attempts - 1) as f64);
-                    // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
-                    let jitter: f64 = match jitter_dist {
-                        Ok(dist) => dist.sample(&mut rng),
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e, "Failed to create jitter distribution, skipping jitter application"
-                            );
-                            JITTER_DEFAULT
-                        }
-                    };
-                    delay_millis *= jitter;
-                    delay = Duration::from_millis(delay_millis as u64)
-                        .min(self.jwks_request_retry_max_wait);
+                    delay = self.retry_config.clone().calculation_delay(attempts);
                     // リクエストの再試行を待機
                     tokio::time::sleep(delay).await;
                 }
@@ -441,10 +475,7 @@ impl EntraIdTokenVerifier {
         refresh_tenant_jwks_interval: Duration,
         entra_id_connection_timeout: Duration,
         entra_id_timeout: Duration,
-        jwks_request_max_attempts: u32,
-        jwks_request_retry_initial_wait: Duration,
-        jwks_request_retry_backoff_multiplier: f64,
-        jwks_request_retry_max_wait: Duration,
+        retry_config: RetryConfig,
         shutdown: CancellationToken,
     ) -> EntraIdResult<Arc<Self>> {
         let mut tenant_registry = TenantRegistry::new();
@@ -452,14 +483,8 @@ impl EntraIdTokenVerifier {
             tenant_registry.insert(tenant.id.clone(), tenant);
         }
 
-        let provider = JwksProvider::new(
-            entra_id_connection_timeout,
-            entra_id_timeout,
-            jwks_request_max_attempts,
-            jwks_request_retry_initial_wait,
-            jwks_request_retry_backoff_multiplier,
-            jwks_request_retry_max_wait,
-        )?;
+        let provider =
+            JwksProvider::new(entra_id_connection_timeout, entra_id_timeout, retry_config)?;
 
         let mut tenant_jwks_cache = TenantJwksCache::new();
         let mut tenant_refresh_states = HashMap::new();
@@ -574,18 +599,28 @@ impl EntraIdTokenVerifier {
         // 存在しない場合はキャッシュに追加
         let now = Instant::now();
         let mut cache = self.cache.entries.write().await;
-        let cached_jwk_map = cache.get_mut(tenant_id).unwrap(); // 存在確認済み
-        for key in fetched.keys {
-            cached_jwk_map
-                .entry(Kid(key.kid.clone()))
-                .and_modify(|managed| {
-                    managed.last_seen_at = now;
-                })
-                .or_insert(CachedJwk {
-                    jwk: key,
-                    last_seen_at: now,
-                });
+        match cache.get_mut(tenant_id) {
+            Some(cached_jwk_map) => {
+                for key in fetched.keys {
+                    cached_jwk_map
+                        .entry(Kid(key.kid.clone()))
+                        .and_modify(|managed| {
+                            managed.last_seen_at = now;
+                        })
+                        .or_insert(CachedJwk {
+                            jwk: key,
+                            last_seen_at: now,
+                        });
+                }
+            }
+            None => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    "Tenant JWKs cache entry not found when refreshing"
+                );
+            }
         }
+
         Ok(())
     }
 
@@ -626,14 +661,14 @@ impl EntraIdTokenVerifier {
         if state.refreshing {
             // 現在リフレッシュしている場合は、他のスレッドがリフレッシュするまで待機
             let notify = state.notify.clone();
-            drop(states); // ロック解放
+            drop(states); // ロック解除
             notify.notified().await;
             return Ok(());
         }
 
         // リフレッシュしていない場合は、このスレッドがリフレッシュを担当
         state.refreshing = true;
-        drop(states); // ロック解放
+        drop(states); // ロック解除
 
         // テナントのJWK公開鍵キャッシュをリフレッシュ
         // 運用中のリフレッシュはベストエフォートとし、失敗しても処理を継続
@@ -648,6 +683,7 @@ impl EntraIdTokenVerifier {
         let mut states = self.cache.refresh_states.lock().await;
 
         // リフレッシュ処理が終了したため、リフレッシュ中でない状態に変更した後、他のスレッドに通知して待機を解除
+        // メソッドの最初の方でテナントのJWK公開鍵キャッシュのリフレッシュ状態の確認、または登録がされているためラップ解除
         let state = states.get_mut(tenant_id).unwrap();
         state.refreshing = false;
         state.notify.notify_waiters();
@@ -790,10 +826,7 @@ pub struct EntraIdTokenVerifierBuilder {
     refresh_tenant_jwks_interval: Option<Duration>,
     entra_id_connection_timeout: Option<Duration>,
     entra_id_timeout: Option<Duration>,
-    jwks_request_max_attempts: Option<u32>,
-    jwks_request_retry_initial_wait: Option<Duration>,
-    jwks_request_retry_backoff_multiplier: Option<f64>,
-    jwks_request_retry_max_wait: Option<Duration>,
+    retry_config: Option<RetryConfig>,
     shutdown: Option<CancellationToken>,
 }
 
@@ -906,69 +939,18 @@ impl EntraIdTokenVerifierBuilder {
         Ok(self)
     }
 
-    /// Entra IDのJWKsエンドポイントからレスポンスが返ってくるまでリクエストする最大試行回数を設定する。
+    /// Entra IDのJWKsエンドポイントへのリトライ設定を設定する。
     ///
     /// # Arguments
     ///
-    /// * `max_attempts` - 最大試行回数
+    /// * `retry_config` - リトライ設定
     ///
     /// # Returns
     ///
     /// * 自身のインスタンス
-    pub fn jwks_request_max_attempts(mut self, max_attempts: u32) -> EntraIdResult<Self> {
-        if max_attempts == 0 {
-            return Err("JWKs request max attempts must be greater than zero".into());
-        }
-        self.jwks_request_max_attempts = Some(max_attempts);
-        Ok(self)
-    }
-
-    /// Entra IDのJWKsエンドポイントに最初に再試行リクエストを送信するまでの待機する時間を設定する。
-    ///
-    /// # Arguments
-    ///
-    /// * `initial_wait` - 最初の待機時間
-    ///
-    /// # Returns
-    ///
-    /// * 自身のインスタンス
-    pub fn jwks_request_retry_initial_wait(mut self, initial_wait: Duration) -> Self {
-        self.jwks_request_retry_initial_wait = Some(initial_wait);
+    pub fn retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.retry_config = Some(retry_config);
         self
-    }
-
-    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間を増加させる乗数を設定する。
-    ///
-    /// # Arguments
-    ///
-    /// * `multiplier` - 待機時間増加乗数
-    ///
-    /// # Returns
-    ///
-    /// * 自身のインスタンス
-    pub fn jwks_request_retry_backoff_multiplier(mut self, multiplier: f64) -> EntraIdResult<Self> {
-        if multiplier < 1.0 {
-            return Err("JWKs request retry backoff multiplier must be at least 1.0".into());
-        }
-        self.jwks_request_retry_backoff_multiplier = Some(multiplier);
-        Ok(self)
-    }
-
-    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間を設定する。
-    ///
-    /// # Arguments
-    ///
-    /// * `max_wait` - 最大待機時間
-    ///
-    /// # Returns
-    ///
-    /// * 自身のインスタンス
-    pub fn jwks_request_retry_max_wait(mut self, max_wait: Duration) -> EntraIdResult<Self> {
-        if max_wait.is_zero() {
-            return Err("JWKs request retry max wait must be greater than zero".into());
-        }
-        self.jwks_request_retry_max_wait = Some(max_wait);
-        Ok(self)
     }
 
     /// バックグラウンドタスクを停止するためのキャンセルトークンを設定する。
@@ -1009,22 +991,9 @@ impl EntraIdTokenVerifierBuilder {
         let entra_id_timeout = self
             .entra_id_timeout
             .ok_or_else(|| EntraIdError::InitializeError("Entra ID timeout is not set".into()))?;
-        let jwks_request_max_attempts = self.jwks_request_max_attempts.ok_or_else(|| {
-            EntraIdError::InitializeError("JWKs request max attempts is not set".into())
-        })?;
-        let jwks_request_retry_initial_wait =
-            self.jwks_request_retry_initial_wait.ok_or_else(|| {
-                EntraIdError::InitializeError("JWKs request retry initial wait is not set".into())
-            })?;
-        let jwks_request_retry_backoff_multiplier =
-            self.jwks_request_retry_backoff_multiplier.ok_or_else(|| {
-                EntraIdError::InitializeError(
-                    "JWKs request retry backoff multiplier is not set".into(),
-                )
-            })?;
-        let jwks_request_retry_max_wait = self.jwks_request_retry_max_wait.ok_or_else(|| {
-            EntraIdError::InitializeError("JWKs request retry max wait is not set".into())
-        })?;
+        let retry_config = self
+            .retry_config
+            .ok_or_else(|| EntraIdError::InitializeError("Retry config is not set".into()))?;
         let shutdown = self
             .shutdown
             .ok_or_else(|| EntraIdError::InitializeError("Shutdown token is not set".into()))?;
@@ -1035,10 +1004,7 @@ impl EntraIdTokenVerifierBuilder {
             refresh_tenant_jwks_interval,
             entra_id_connection_timeout,
             entra_id_timeout,
-            jwks_request_max_attempts,
-            jwks_request_retry_initial_wait,
-            jwks_request_retry_backoff_multiplier,
-            jwks_request_retry_max_wait,
+            retry_config,
             shutdown,
         )
         .await

@@ -19,7 +19,7 @@ mod handlers;
 mod state;
 
 use crate::config::AppConfig;
-use crate::entra_id::{EntraIdTokenVerifier, EntraIdTokenVerifierBuilder};
+use crate::entra_id::{EntraIdTokenVerifier, EntraIdTokenVerifierBuilder, RetryConfig};
 use crate::handlers::create_routes;
 use crate::state::AppState;
 
@@ -29,6 +29,12 @@ async fn main() -> anyhow::Result<()> {
     let app_config = AppConfig::load()?;
     let web_server_port = app_config.web.port;
     let client_credentials = app_config.client_credentials.clone();
+    let retry_config = RetryConfig::new(
+        app_config.entra_id.jwks_request_max_attempts,
+        Duration::from_millis(app_config.entra_id.jwks_request_retry_initial_wait),
+        app_config.entra_id.jwks_request_retry_backoff_multiplier,
+        Duration::from_secs(app_config.entra_id.jwks_request_retry_max_wait),
+    )?;
 
     // ログの設定
     LogTracer::init().map_err(|e| {
@@ -44,7 +50,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Entra IDトークン検証者の構築
     let shutdown_token = CancellationToken::new();
-    let token_verifier = build_token_verifier(app_config, shutdown_token.clone()).await?;
+    let token_verifier =
+        build_token_verifier(app_config, retry_config, shutdown_token.clone()).await?;
 
     // ルーターの作成
     let app_state = AppState {
@@ -106,6 +113,7 @@ fn create_subscriber(name: &str, level: &str) -> impl tracing::Subscriber + Send
 
 async fn build_token_verifier(
     mut app_config: AppConfig,
+    retry_config: RetryConfig,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<Arc<EntraIdTokenVerifier>> {
     EntraIdTokenVerifierBuilder::default()
@@ -119,16 +127,7 @@ async fn build_token_verifier(
         ))?
         .entra_id_connection_timeout(Duration::from_secs(app_config.entra_id.connection_timeout))?
         .entra_id_timeout(Duration::from_secs(app_config.entra_id.timeout))?
-        .jwks_request_max_attempts(app_config.entra_id.jwks_request_max_attempts)?
-        .jwks_request_retry_initial_wait(Duration::from_millis(
-            app_config.entra_id.jwks_request_retry_initial_wait,
-        ))
-        .jwks_request_retry_backoff_multiplier(
-            app_config.entra_id.jwks_request_retry_backoff_multiplier,
-        )?
-        .jwks_request_retry_max_wait(Duration::from_secs(
-            app_config.entra_id.jwks_request_retry_max_wait,
-        ))?
+        .retry_config(retry_config)
         .shutdown(shutdown_token)
         .build()
         .await
