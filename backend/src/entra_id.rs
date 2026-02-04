@@ -248,6 +248,10 @@ fn is_retryable_error(e: &reqwest::Error) -> bool {
     }
 }
 
+const JITTER_MIN: f64 = 0.8;
+const JITTER_MAX: f64 = 1.2;
+const JITTER_DEFAULT: f64 = 1.0;
+
 impl JwksProvider {
     /// コンストラクタ
     ///
@@ -304,7 +308,7 @@ impl JwksProvider {
         let mut attempts = 0;
         let multiplier = self.jwks_request_retry_backoff_multiplier;
         let mut rng = SmallRng::from_rng(&mut rand::rng());
-        let jitter_dist = Uniform::new(0.8, 1.2);
+        let jitter_dist = Uniform::new(JITTER_MIN, JITTER_MAX);
 
         loop {
             attempts += 1;
@@ -340,7 +344,7 @@ impl JwksProvider {
                             tracing::warn!(
                                 error = %e, "Failed to create jitter distribution, skipping jitter application"
                             );
-                            1.0
+                            JITTER_DEFAULT
                         }
                     };
                     delay_millis *= jitter;
@@ -1064,10 +1068,12 @@ struct UnverifiedClaims {
     tid: Option<String>,
 }
 
+const JWT_PARTS_COUNT: usize = 3;
+
 /// JWTのペイロード部分をデコードして検証されていないクレームを抽出する。
 fn extract_payload(token: &BearerToken) -> EntraIdResult<UnverifiedClaims> {
     let parts: Vec<&str> = token.0.expose_secret().split('.').collect();
-    if parts.len() != 3 {
+    if parts.len() != JWT_PARTS_COUNT {
         return Err(EntraIdError::InvalidTokenFormat(
             "Invalid JWT format".into(),
         ));
