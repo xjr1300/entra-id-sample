@@ -3,7 +3,7 @@ import {
   UnauthenticatedTemplate,
 } from '@azure/msal-react';
 import { useSSO } from './hooks';
-import { UserProfile } from './components/UserProfile';
+import { UserProfile, Me } from './components';
 
 interface ButtonProps {
   onClick: () => Promise<void>;
@@ -21,15 +21,18 @@ const App = () => {
 
   return (
     <>
-      <p>Entra ID SSO Sample</p>
+      <h1>Entra ID SSO Sample</h1>
       {isCheckingSSO && <p>Checking SSO status...</p>}
       {isLoginInProgress && <p>Login in progress...</p>}
       {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+
       <AuthenticatedTemplate>
         <p>You are logged in!</p>
         <UserProfile />
+        <Me />
         <LogoutButton onClick={logout} />
       </AuthenticatedTemplate>
+
       <UnauthenticatedTemplate>
         <p>You are not logged in.</p>
         <LoginButton onClick={login} />

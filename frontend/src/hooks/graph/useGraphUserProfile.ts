@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
-import { useAuthenticated } from './index';
-import { graphApiClient } from '../axios';
+import { useAuthenticated } from '../useAuthenticated';
+import { graphApiClient } from '../../graph';
 
 // ユーザープロファイル
 export interface GraphUserProfile {
   id?: string | null;
   userPrincipalName?: string | null;
-  displayName?: string | null;
   surname?: string | null;
   givenName?: string | null;
-  jobTitle?: string | null;
+  displayName?: string | null;
   mail?: string | null;
+  jobTitle?: string | null;
   department?: string | null;
   officeLocation?: string | null;
   businessPhones?: string[] | null;
@@ -18,7 +18,7 @@ export interface GraphUserProfile {
   preferredLanguage?: string | null;
 }
 
-export const useUserProfile = () => {
+export const useGraphUserProfile = () => {
   const { isAuthenticated } = useAuthenticated();
   const [userProfile, setUserProfile] = useState<GraphUserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -52,15 +52,15 @@ const fetchUserProfile = async (
       import.meta.env.VITE_GRAPH_ME_ENDPOINT,
     );
     const data = response.data;
-    if (!isGraphUserProfile(data)) {
+    if (isGraphUserProfile(data)) {
+      setUserProfile(data);
+    } else {
       const message = `Unexpected user profile format: ${JSON.stringify(data)}`;
       console.error(message);
       if (!isCancelled()) {
         setError(message);
       }
-      return;
     }
-    setUserProfile(data);
   } catch (err) {
     const message = `Failed to fetch user profile: ${JSON.stringify(err)}`;
     console.error(message);

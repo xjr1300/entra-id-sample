@@ -2,18 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   InteractionRequiredAuthError,
   InteractionStatus,
-  type AccountInfo,
   type IPublicClientApplication,
 } from '@azure/msal-browser';
 import { useMsal } from '@azure/msal-react';
-import { graphLoginRequest } from '../authConfig.ts';
 import { useAuthenticated } from './useAuthenticated.ts';
-import { useAcquireToken } from './useAcquireToken.ts';
+import { getGraphAccessToken, graphLoginRequest } from '../graph';
 
 export const useSSO = () => {
   const { instance, inProgress } = useMsal();
-  const { isAuthenticated, account } = useAuthenticated();
-  const { acquireToken } = useAcquireToken();
+  const { isAuthenticated } = useAuthenticated();
   // SSOログイン状態確認中フラグ
   const [isCheckingSSO, setIsCheckingSSO] = useState(true);
   // ログイン処理中フラグ
@@ -27,12 +24,12 @@ export const useSSO = () => {
     // このコンポーネントがアンマウントされた後に、状態を更新しないようにするためのフラグ
     // このコンポーネントがアンマウントされた後、cancelledはtrue
     const cancelled = false;
-    checkSSO(inProgress, isAuthenticated, acquireToken, account).finally(() => {
+    checkSSO(inProgress, isAuthenticated).finally(() => {
       if (!cancelled) {
         setIsCheckingSSO(false);
       }
     });
-  }, [instance, isAuthenticated, inProgress, acquireToken, account]);
+  }, [instance, isAuthenticated, inProgress]);
 
   // ログイン
   const login = useCallback(
@@ -60,8 +57,6 @@ export const useSSO = () => {
 const checkSSO = async (
   inProgress: InteractionStatus,
   isAuthenticated: boolean,
-  acquireToken: (account: AccountInfo) => Promise<string>,
-  account: AccountInfo,
 ) => {
   // MSALが何かしている間は待機
   if (inProgress !== InteractionStatus.None) return;
@@ -70,7 +65,7 @@ const checkSSO = async (
 
   try {
     // ログインしているアカウントのトークンを取得
-    await acquireToken(account);
+    await getGraphAccessToken();
     console.log('SSO Silent Login Succeeded');
   } catch (err) {
     // トークンを取得する際に例外が発生するのは、ログインしていない場合であり、これは無視して良いため

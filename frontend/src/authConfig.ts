@@ -18,7 +18,7 @@ export const authConfig: Configuration = {
 //
 // https://learn.microsoft.com/en-us/entra/msal/javascript/browser/resources-and-scopes
 // By default MSAL.js will add the openid, profile and offline_access scopes to every request.
-export const graphLoginRequest: SilentRequest = {
+export const loginRequest: SilentRequest = {
   scopes: [
     /*
     // OpenID Connectに基づく認証を行い、IDトークンを取得するために必要
