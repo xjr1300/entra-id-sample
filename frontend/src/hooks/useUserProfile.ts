@@ -18,6 +18,62 @@ export interface GraphUserProfile {
   preferredLanguage?: string | null;
 }
 
+export const useUserProfile = () => {
+  const { isAuthenticated } = useAuthenticated();
+  const [userProfile, setUserProfile] = useState<GraphUserProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let cancelled = false;
+    fetchUserProfile(setUserProfile, setError, setIsLoading, () => cancelled);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
+  return { userProfile, isLoading, error };
+};
+
+const fetchUserProfile = async (
+  setUserProfile: React.Dispatch<React.SetStateAction<GraphUserProfile | null>>,
+  setError: React.Dispatch<React.SetStateAction<string | null>>,
+  setIsLoading: React.Dispatch<React.SetStateAction<boolean>>,
+  isCancelled: () => boolean,
+) => {
+  setIsLoading(true);
+  setError(null);
+
+  try {
+    const response = await graphApiClient.get(
+      import.meta.env.VITE_GRAPH_ME_ENDPOINT,
+    );
+    const data = response.data;
+    if (!isGraphUserProfile(data)) {
+      const message = `Unexpected user profile format: ${JSON.stringify(data)}`;
+      console.error(message);
+      if (!isCancelled()) {
+        setError(message);
+      }
+      return;
+    }
+    setUserProfile(data);
+  } catch (err) {
+    const message = `Failed to fetch user profile: ${JSON.stringify(err)}`;
+    console.error(message);
+    if (!isCancelled()) {
+      setError(message);
+    }
+  } finally {
+    if (!isCancelled()) {
+      setIsLoading(false);
+    }
+  }
+};
+
 // GraphUserProfile型ガード
 export const isGraphUserProfile = (obj: unknown): obj is GraphUserProfile => {
   if (typeof obj != 'object' || obj === null) return false;
@@ -53,60 +109,4 @@ export const isGraphUserProfile = (obj: unknown): obj is GraphUserProfile => {
   )
     return false;
   return true;
-};
-
-export const useUserProfile = () => {
-  const { isAuthenticated } = useAuthenticated();
-  const [userProfile, setUserProfile] = useState<GraphUserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setUserProfile(null);
-      return;
-    }
-
-    let cancelled = false;
-    const fetchUserProfile = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const response = await graphApiClient.get(
-          import.meta.env.VITE_GRAPH_ME_ENDPOINT,
-        );
-        const data = response.data;
-        if (!isGraphUserProfile(data)) {
-          console.error('Unexpected user profile format', data);
-          if (!cancelled) {
-            setError(
-              'Microsoft Graph APIから取得したユーザープロファイルの形式が不正です。',
-            );
-          }
-          return;
-        }
-        setUserProfile(data);
-      } catch (err) {
-        console.error('Failed to fetch user profile', err);
-        if (!cancelled) {
-          setError(
-            'Microsoft Graph APIからユーザープロファイルを取得できませんでした。',
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    fetchUserProfile();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
-
-  return { userProfile, isLoading, error };
 };
