@@ -11,6 +11,7 @@ export const graphApiClient = axios.create({
   // - Cookieを送信する
   // - Set-Cookieヘッダーを受け入れる
   // - クライアント証明書があれば送信する
+  // アプリでは資格情報を送信しないため、falseに設定する。
   withCredentials: false,
   timeout: Number(import.meta.env.VITE_AXIOS_TIMEOUT),
 });
