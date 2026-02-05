@@ -72,6 +72,12 @@ pub struct EntraIdConfig {
     /// 指数バックオフとなる。
     pub jwks_request_retry_backoff_multiplier: f64,
 
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間にランダムなジッターを場するときの最小値
+    pub jwks_request_retry_wait_jitter_min: f64,
+
+    /// Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する時間にランダムなジッターを場するときの最大値
+    pub jwks_request_retry_wait_jitter_max: f64,
+
     ///Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間（秒）
     pub jwks_request_retry_max_wait: u64,
 }

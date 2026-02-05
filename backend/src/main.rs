@@ -33,6 +33,8 @@ async fn main() -> anyhow::Result<()> {
         app_config.entra_id.jwks_request_max_attempts,
         Duration::from_millis(app_config.entra_id.jwks_request_retry_initial_wait),
         app_config.entra_id.jwks_request_retry_backoff_multiplier,
+        app_config.entra_id.jwks_request_retry_wait_jitter_min,
+        app_config.entra_id.jwks_request_retry_wait_jitter_max,
         Duration::from_secs(app_config.entra_id.jwks_request_retry_max_wait),
     )?;
 

@@ -11,8 +11,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-const JITTER_MIN: f64 = 0.8;
-const JITTER_MAX: f64 = 1.2;
+/// JWTのピリオドで区切られた部分の数
 const JWT_PARTS_COUNT: usize = 3;
 
 /// Entra ID関連の処理の結果型
@@ -221,10 +220,22 @@ pub struct RetryConfig {
 }
 
 impl RetryConfig {
+    /// コンストラクタ
+    ///
+    /// # Arguments
+    ///
+    /// * `max_attempts` - 最大試行回数
+    /// * `initial_wait` - 最初の待機時間
+    /// * `backoff_multiplier` - 待機時間の増加乗数
+    /// * `jitter_min` - ジッターの最小値
+    /// * `jitter_max` - ジッターの最大値
+    /// * `max_wait` - 最大待機時間
     pub fn new(
         max_attempts: u32,
         initial_wait: Duration,
         backoff_multiplier: f64,
+        jitter_min: f64,
+        jitter_max: f64,
         max_wait: Duration,
     ) -> EntraIdResult<Self> {
         if max_attempts == 0 {
@@ -232,6 +243,9 @@ impl RetryConfig {
         }
         if backoff_multiplier < 1.0 {
             return Err("JWKs request retry backoff multiplier must be at least 1.0".into());
+        }
+        if jitter_min < 0.0 || jitter_max < 0.0 || jitter_min > jitter_max {
+            return Err("Invalid jitter min/max values".into());
         }
         if max_wait.is_zero() {
             return Err("JWKs request retry max wait must be greater than zero".into());
@@ -242,7 +256,7 @@ impl RetryConfig {
             initial_wait,
             backoff_multiplier,
             max_wait,
-            jitter_dist: Uniform::new(JITTER_MIN, JITTER_MAX).map_err(|e| {
+            jitter_dist: Uniform::new(jitter_min, jitter_max).map_err(|e| {
                 tracing::warn!(
                     error = %e, "Failed to create jitter distribution, using default values"
                 );
