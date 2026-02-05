@@ -128,6 +128,7 @@ struct MeResponse {
     display_name: Option<String>,
     mail: Option<String>,
     job_title: Option<String>,
+    department: Option<String>,
     office_location: Option<String>,
     business_phones: Option<Vec<String>>,
     mobile_phone: Option<String>,
