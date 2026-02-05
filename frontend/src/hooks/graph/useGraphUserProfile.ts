@@ -95,6 +95,11 @@ export const isGraphUserProfile = (obj: unknown): obj is GraphUserProfile => {
   if (instance.mail != null && typeof instance.mail !== 'string') return false;
   if (instance.department != null && typeof instance.department !== 'string')
     return false;
+  if (
+    instance.officeLocation != null &&
+    typeof instance.officeLocation !== 'string'
+  )
+    return false;
   if (instance.businessPhones != null) {
     if (!Array.isArray(instance.businessPhones)) return false;
     for (const phone of instance.businessPhones) {
