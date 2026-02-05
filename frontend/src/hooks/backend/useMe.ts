@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useBackendAccessToken } from './useBackendAccessToken';
 import { backendApiClient } from '../../backend/backendApiClient';
+import { isProfile, type Profile } from '../../types';
 
 export const useMe = () => {
-  const [me, setMe] = useState<Me | null>(null);
+  const [me, setMe] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const { fetchAccessToken } = useBackendAccessToken();
@@ -21,7 +22,7 @@ export const useMe = () => {
 
 const fetchMe = async (
   fetchAccessToken: () => Promise<string>,
-  setMe: React.Dispatch<React.SetStateAction<Me | null>>,
+  setMe: React.Dispatch<React.SetStateAction<Profile | null>>,
   setError: React.Dispatch<React.SetStateAction<string | null>>,
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>,
   isCancelled: () => boolean,
@@ -30,13 +31,13 @@ const fetchMe = async (
   setError(null);
   try {
     const token = await fetchAccessToken();
-    const response = await backendApiClient.get<Me>('/me', {
+    const response = await backendApiClient.get('/me', {
       headers: {
         Authorization: `Bearer ${token}`,
       },
     });
     const data = response.data;
-    if (isMe(data)) {
+    if (isProfile(data)) {
       setMe(data);
     } else {
       const message = `Unexpected /me response format: ${JSON.stringify(data)}`;
@@ -56,52 +57,4 @@ const fetchMe = async (
       setIsLoading(false);
     }
   }
-};
-
-export interface Me {
-  id: string;
-  userPrincipalName?: string | null;
-  surname?: string | null;
-  givenName?: string | null;
-  displayName?: string | null;
-  mail?: string | null;
-  jobTitle?: string | null;
-  department?: string | null;
-  officeLocation?: string | null;
-  businessPhones?: string[] | null;
-  mobilePhone: string | null;
-  preferredLanguage: string | null;
-}
-
-const isMe = (obj: unknown): obj is Me => {
-  if (typeof obj !== 'object' || obj === null) return false;
-  const instance = obj as Me;
-  if (typeof instance.id !== 'string') return false;
-  if (
-    instance.userPrincipalName != null &&
-    typeof instance.userPrincipalName !== 'string'
-  )
-    return false;
-  if (instance.surname != null && typeof instance.surname !== 'string')
-    return false;
-  if (instance.givenName != null && typeof instance.givenName !== 'string')
-    return false;
-  if (instance.displayName != null && typeof instance.displayName !== 'string')
-    return false;
-  if (instance.mail != null && typeof instance.mail !== 'string') return false;
-  if (instance.jobTitle != null && typeof instance.jobTitle !== 'string')
-    return false;
-  if (instance.department != null && typeof instance.department !== 'string')
-    return false;
-  if (
-    instance.officeLocation != null &&
-    typeof instance.officeLocation !== 'string'
-  )
-    return false;
-  if (
-    instance.businessPhones != null &&
-    !Array.isArray(instance.businessPhones)
-  )
-    return false;
-  return true;
 };

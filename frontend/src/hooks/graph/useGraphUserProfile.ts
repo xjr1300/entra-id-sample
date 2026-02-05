@@ -1,26 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useAuthenticated } from '../useAuthenticated';
 import { graphApiClient } from '../../graph';
-
-// ユーザープロファイル
-export interface GraphUserProfile {
-  id?: string | null;
-  userPrincipalName?: string | null;
-  surname?: string | null;
-  givenName?: string | null;
-  displayName?: string | null;
-  mail?: string | null;
-  jobTitle?: string | null;
-  department?: string | null;
-  officeLocation?: string | null;
-  businessPhones?: string[] | null;
-  mobilePhone?: string | null;
-  preferredLanguage?: string | null;
-}
+import { isProfile, type Profile } from '../../types';
 
 export const useGraphUserProfile = () => {
   const { isAuthenticated } = useAuthenticated();
-  const [userProfile, setUserProfile] = useState<GraphUserProfile | null>(null);
+  const [userProfile, setUserProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +24,7 @@ export const useGraphUserProfile = () => {
 };
 
 const fetchUserProfile = async (
-  setUserProfile: React.Dispatch<React.SetStateAction<GraphUserProfile | null>>,
+  setUserProfile: React.Dispatch<React.SetStateAction<Profile | null>>,
   setError: React.Dispatch<React.SetStateAction<string | null>>,
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>,
   isCancelled: () => boolean,
@@ -52,7 +37,7 @@ const fetchUserProfile = async (
       import.meta.env.VITE_GRAPH_ME_ENDPOINT,
     );
     const data = response.data;
-    if (isGraphUserProfile(data)) {
+    if (isProfile(data)) {
       setUserProfile(data);
     } else {
       const message = `Unexpected user profile format: ${JSON.stringify(data)}`;
@@ -72,46 +57,4 @@ const fetchUserProfile = async (
       setIsLoading(false);
     }
   }
-};
-
-// GraphUserProfile型ガード
-export const isGraphUserProfile = (obj: unknown): obj is GraphUserProfile => {
-  if (typeof obj != 'object' || obj === null) return false;
-  const instance = obj as GraphUserProfile;
-  if (instance.id != null && typeof instance.id !== 'string') return false;
-  if (
-    instance.userPrincipalName != null &&
-    typeof instance.userPrincipalName !== 'string'
-  )
-    return false;
-  if (instance.displayName != null && typeof instance.displayName !== 'string')
-    return false;
-  if (instance.surname != null && typeof instance.surname !== 'string')
-    return false;
-  if (instance.givenName != null && typeof instance.givenName !== 'string')
-    return false;
-  if (instance.jobTitle != null && typeof instance.jobTitle !== 'string')
-    return false;
-  if (instance.mail != null && typeof instance.mail !== 'string') return false;
-  if (instance.department != null && typeof instance.department !== 'string')
-    return false;
-  if (
-    instance.officeLocation != null &&
-    typeof instance.officeLocation !== 'string'
-  )
-    return false;
-  if (instance.businessPhones != null) {
-    if (!Array.isArray(instance.businessPhones)) return false;
-    for (const phone of instance.businessPhones) {
-      if (typeof phone !== 'string') return false;
-    }
-  }
-  if (instance.mobilePhone != null && typeof instance.mobilePhone !== 'string')
-    return false;
-  if (
-    instance.preferredLanguage != null &&
-    typeof instance.preferredLanguage !== 'string'
-  )
-    return false;
-  return true;
 };
