@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,6 +15,13 @@ use url::Url;
 /// JWTのピリオドで区切られた部分の数
 const JWT_PARTS_COUNT: usize = 3;
 
+/// 定期的にバックグラウンドで全てのテナントのJWK公開鍵をリフレッシュする最小間隔
+///
+/// `EntraIdTokenVerifier`の`new`メソッドを呼び出されたとき、すべてのテナントのJWK公開鍵を
+/// 取得した後、JWK公開鍵をバックグラウンドでリフレッシュするタスクを実行する。
+/// このとき、バックグラウンドタスクが、すぐにJWK公開鍵をリフレッシュしないようにするための最小間隔。
+const MIN_BACKGROUND_JWKS_REFRESH_INTERVAL: Duration = Duration::from_mins(30);
+
 /// Entra ID関連の処理の結果型
 pub type EntraIdResult<T> = Result<T, EntraIdError>;
 
@@ -22,7 +30,7 @@ pub type EntraIdResult<T> = Result<T, EntraIdError>;
 pub enum EntraIdError {
     /// Entra IDトークン検証者の初期化に失敗
     #[error("{0}")]
-    InitializeError(String),
+    Initialize(Cow<'static, str>),
 
     /// JWKsプロバイダの初期化に失敗
     #[error("Failed to initialize JWKs provider: {0}")]
@@ -61,8 +69,8 @@ pub enum EntraIdError {
     UnsupportedTokenAlgorithm(jsonwebtoken::Algorithm),
 
     /// JWTの署名またはクレームの検証に失敗
-    #[error("Failed to verify JWT signature or claims")]
-    VerifyTokenError,
+    #[error("Failed to verify JWT signature or claims: {0}")]
+    VerifyTokenError(jsonwebtoken::errors::Error),
 
     /// JWKから復号鍵の作成に失敗
     #[error("Failed to create decoding key for kid {0}: {1}")]
@@ -215,7 +223,7 @@ pub struct RetryConfig {
     backoff_multiplier: f64,
     /// 最大待機時間
     max_wait: Duration,
-    /// ジッター分布
+    /// ジッター分布（待機時間に乗算されるランダム係数）
     jitter_dist: Uniform<f64>,
 }
 
@@ -239,16 +247,24 @@ impl RetryConfig {
         max_wait: Duration,
     ) -> EntraIdResult<Self> {
         if max_attempts == 0 {
-            return Err("JWKs request max attempts must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "JWKs request max attempts must be greater than zero".into(),
+            ));
         }
         if backoff_multiplier < 1.0 {
-            return Err("JWKs request retry backoff multiplier must be at least 1.0".into());
+            return Err(EntraIdError::Initialize(
+                "JWKs request retry backoff multiplier must be at least 1.0".into(),
+            ));
         }
         if jitter_min < 0.0 || jitter_max < 0.0 || jitter_min > jitter_max {
-            return Err("Invalid jitter min/max values".into());
+            return Err(EntraIdError::Initialize(
+                "Invalid jitter min/max values".into(),
+            ));
         }
         if max_wait.is_zero() {
-            return Err("JWKs request retry max wait must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "JWKs request retry max wait must be greater than zero".into(),
+            ));
         }
 
         Ok(Self {
@@ -257,9 +273,6 @@ impl RetryConfig {
             backoff_multiplier,
             max_wait,
             jitter_dist: Uniform::new(jitter_min, jitter_max).map_err(|e| {
-                tracing::warn!(
-                    error = %e, "Failed to create jitter distribution, using default values"
-                );
                 EntraIdError::JwksProviderInitError(format!(
                     "Failed to create jitter distribution: {}",
                     e
@@ -268,9 +281,11 @@ impl RetryConfig {
         })
     }
 
-    fn calculation_delay(&self, attempts: u32) -> Duration {
+    fn calculate_delay(&self, attempts: u32) -> Duration {
         let mut delay_millis = self.initial_wait.as_millis() as f64
-            * self.backoff_multiplier.powf((attempts - 1) as f64);
+            * self
+                .backoff_multiplier
+                .powf(attempts.saturating_sub(1) as f64);
         // ランダムジッターを追加して、同時に再試行が発生するのを防ぐ
         let jitter: f64 = self.jitter_dist.sample(&mut rand::rng());
         delay_millis *= jitter;
@@ -346,22 +361,26 @@ impl JwksProvider {
     /// * JWK公開鍵セット
     async fn fetch_jwks(&self, jwks_uri: &Url) -> EntraIdResult<JwksResponse> {
         let mut attempts = 0;
-        let mut delay = self.retry_config.initial_wait;
+        let mut delay = Duration::ZERO;
 
         loop {
             attempts += 1;
             let response = self
                 .client
-                .get(jwks_uri.clone())
+                .get(jwks_uri.as_str())
                 .send()
                 .await
                 .map_err(|e| EntraIdError::JwksFetchError(e, jwks_uri.clone()))?;
             match response.error_for_status() {
                 Ok(response) => {
-                    return response
+                    let jwks_response = response
                         .json::<JwksResponse>()
                         .await
-                        .map_err(|e| EntraIdError::JwksResponseParseError(jwks_uri.clone(), e));
+                        .map_err(|e| EntraIdError::JwksResponseParseError(jwks_uri.clone(), e))?;
+                    if jwks_response.keys.is_empty() {
+                        tracing::warn!("JWKs response from {} contains no keys", jwks_uri,);
+                    }
+                    return Ok(jwks_response);
                 }
                 Err(e) => {
                     let retryable = is_retryable_error(&e);
@@ -374,7 +393,7 @@ impl JwksProvider {
                         return Err(EntraIdError::JwksFetchError(e, jwks_uri.clone()));
                     }
                     // 試行回数に対して指数関数的に待機時間を増加させる（指数バックオフ）
-                    delay = self.retry_config.calculation_delay(attempts);
+                    delay = self.retry_config.calculate_delay(attempts);
                     // リクエストの再試行を待機
                     tokio::time::sleep(delay).await;
                 }
@@ -387,9 +406,14 @@ impl JwksProvider {
 struct JwksCacheRefreshState {
     /// 最後にリフレッシュした時刻
     last_refreshed_at: Option<Instant>,
+
     /// リフレッシュ中かどうか
     refreshing: bool,
-    /// リフレッシュ完了を待機しているタスクを通知するためのNotify
+
+    /// リフレッシュ完了を待機しているタスクを通知するための`Notify`
+    ///
+    /// 同じテナントでJWK公開鍵が見つからない場合、複数のリクエストが同時にJWK公開鍵のリフレッシュを要求する可能性がある。
+    /// その際、リフレッシュを担当しないタスクはこの`Notify`を待機するため、同一の`Notify`を共有できるよう`Arc`でラップする。
     notify: Arc<Notify>,
 }
 
@@ -417,14 +441,28 @@ struct JwksCache {
 }
 
 /// Bearerトークン
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[derive(Clone)]
 pub struct BearerToken(pub SecretString);
+
+/// JWK公開鍵キャッシュのリフレッシュ結果
+#[derive(PartialEq, Eq)]
+enum JwksCacheRefreshResult {
+    /// リフレッシュした
+    Refreshed,
+    /// 最近リフレッシュされていたため、リフレッシュしなかった
+    RecentlyRefreshed,
+    /// 他のスレッドのリフレッシュ完了を待機した
+    WaitedForRefresh,
+    /// 現在のスレッドがリフレッシュする権限を得た
+    GrantedRefreshPermission,
+}
 
 /// Entra IDトークン検証者
 pub struct EntraIdTokenVerifier {
     /// テナントレジストリ
     registry: TenantRegistry,
-    /// JwKsプロバイダ
+    /// JWKsプロバイダ
     provider: JwksProvider,
     /// JWK公開鍵キャッシュ
     cache: JwksCache,
@@ -432,8 +470,6 @@ pub struct EntraIdTokenVerifier {
     refresh_jwks_interval: Duration,
     /// テナントのキャッシュされたJWK公開鍵がリフレッシュされてから、次にリフレッシュされるまでの最小時間
     refresh_tenant_jwks_interval: Duration,
-    /// バックグラウンドタスクを停止するためのキャンセルトークン
-    shutdown: CancellationToken,
 }
 
 impl EntraIdTokenVerifier {
@@ -462,18 +498,21 @@ impl EntraIdTokenVerifier {
         retry_config: RetryConfig,
         shutdown: CancellationToken,
     ) -> EntraIdResult<Arc<Self>> {
+        // テナントレジストリを初期化
         let mut tenant_registry = TenantRegistry::new();
         for tenant in tenants.into_iter() {
             tenant_registry.insert(tenant.id.clone(), tenant);
         }
 
+        // JWKsプロバイダを初期化
         let provider =
             JwksProvider::new(entra_id_connection_timeout, entra_id_timeout, retry_config)?;
 
+        // テナントごとのJWK公開鍵キャッシュを初期化
         let mut tenant_jwks_cache = TenantJwksCache::new();
         let mut tenant_refresh_states = HashMap::new();
         for (tenant_id, tenant) in &tenant_registry {
-            // 初期化時はJWKs取得に失敗したら起動させない（fail-fast）
+            // テナントごとのJWK公開鍵を取得して、初期化時は取得に失敗した場合に失敗させる（fail-fast）
             let jwks = provider.fetch_jwks(&tenant.uri).await?;
             let cached_jwks: Vec<CachedJwk> = jwks.keys.into_iter().map(|key| key.into()).collect();
             let mut cached_jwk_map = CachedJwkMap::new();
@@ -488,16 +527,21 @@ impl EntraIdTokenVerifier {
             ttl: jwk_cache_ttl,
             refresh_states: Mutex::new(tenant_refresh_states),
         };
+
+        // ArcでラップしたEntraIdTokenVerifierインスタンスを作成
         let instance = Arc::new(Self {
             registry: tenant_registry,
             provider,
             cache,
             refresh_jwks_interval,
             refresh_tenant_jwks_interval,
-            shutdown,
         });
-        let cloned = Arc::clone(&instance);
-        cloned.refresh_jwks_cache_periodically().await?;
+
+        // 定期的にJWK公開鍵キャッシュをリフレッシュするタスクをバックグラウンドで起動
+        let cloned_instance = Arc::clone(&instance);
+        cloned_instance
+            .run_refresh_jwks_cache_task_in_background(shutdown)
+            .await?;
 
         Ok(instance)
     }
@@ -540,10 +584,12 @@ impl EntraIdTokenVerifier {
         }
 
         // JWK公開鍵を得られなかった場合は、テナントのJWK公開鍵キャッシュを条件付きでリフレッシュ
-        // リフレッシュに失敗しても無視して、再度JWK公開鍵を取得を試行
+        //
+        // テナントのJWK公開鍵キャッシュのリフレッシュに失敗しても、他のスレッドでリフレッシュに成功している可能性
+        // があるため、失敗を無視してJWK公開鍵を取得を再試行する。
         let _ = self.maybe_refresh_tenant_jwks_cache(tenant_id).await;
 
-        // 再度、テナントIDとJWK公開鍵のキーのIDからJWK公開鍵を取得
+        // JWK公開鍵の取得を再試行
         self.find_decoding_key(tenant_id, key_id)
             .await
             .ok_or_else(|| {
@@ -622,40 +668,47 @@ impl EntraIdTokenVerifier {
     /// 現在のスレッドが、指定したテナントのJWK公開鍵をリフレッシュ中であることを確認した場合、他のスレッドがリフレッシュを
     /// 完了するまで待機する。
     ///
-    /// 現在のスレッドが、指定したテナントのJWK公開鍵をリフレッシュ中出ないことを確認した場合、リフレッシュフラグを成立させる
+    /// 現在のスレッドが、指定したテナントのJWK公開鍵をリフレッシュ中でないことを確認した場合、リフレッシュフラグを成立させる
     /// ことで、現在のスレッドが他のスレッドを待機させた後、リフレッシュする。
     /// JWK公開鍵のリフレッシュが終了したとき、成功または失敗をにかかわらず、リフレッシュフラグを解除し、他のスレッドに通知して
     /// 待機を解除する。
-    async fn maybe_refresh_tenant_jwks_cache(&self, tenant_id: &TenantId) -> EntraIdResult<()> {
-        let now = Instant::now();
-
-        let mut states = self.cache.refresh_states.lock().await;
-        let state = states
-            .entry(tenant_id.clone())
-            .or_insert(JwksCacheRefreshState::default());
-
-        // 最後にリフレッシュしてから、最小リフレッシュ間隔を超えていなければリフレッシュしない
-        if let Some(last_refreshed_at) = state.last_refreshed_at
-            && now.duration_since(last_refreshed_at) < self.refresh_tenant_jwks_interval
-        {
-            tracing::info!( tenant_id = %tenant_id, "Skip JWK refresh due to cool down");
-            return Ok(());
+    async fn maybe_refresh_tenant_jwks_cache(
+        &self,
+        tenant_id: &TenantId,
+    ) -> EntraIdResult<JwksCacheRefreshResult> {
+        // テナントのJWK公開鍵キャッシュのリフレッシュ状態を確認
+        let result = {
+            let now = Instant::now();
+            let mut states = self.cache.refresh_states.lock().await;
+            let state = states
+                .entry(tenant_id.clone())
+                .or_insert(JwksCacheRefreshState::default());
+            if let Some(last_refreshed_at) = state.last_refreshed_at
+                && now.duration_since(last_refreshed_at) < self.refresh_tenant_jwks_interval
+            {
+                // 最後にリフレッシュしてから、最小リフレッシュ間隔を超えていなければリフレッシュしない
+                tracing::info!( tenant_id = %tenant_id, "Skip JWK refresh due to cool down");
+                JwksCacheRefreshResult::RecentlyRefreshed
+            } else if state.refreshing {
+                // 現在、他のスレッドがリフレッシュしている場合、明示的にロックを解放して、他のスレッドがリフレシュするまで待機
+                let notify = state.notify.clone();
+                drop(states);
+                notify.notified().await;
+                JwksCacheRefreshResult::WaitedForRefresh
+            } else {
+                // リフレッシュしていない場合は、このスレッドがリフレッシュを担当
+                state.refreshing = true;
+                JwksCacheRefreshResult::GrantedRefreshPermission
+            }
+        };
+        // このスレッドがリフレッシュしない場合は、結果を返して終了
+        if result != JwksCacheRefreshResult::GrantedRefreshPermission {
+            return Ok(result);
         }
-
-        if state.refreshing {
-            // 現在リフレッシュしている場合は、他のスレッドがリフレッシュするまで待機
-            let notify = state.notify.clone();
-            drop(states); // ロック解除
-            notify.notified().await;
-            return Ok(());
-        }
-
-        // リフレッシュしていない場合は、このスレッドがリフレッシュを担当
-        state.refreshing = true;
-        drop(states); // ロック解除
 
         // テナントのJWK公開鍵キャッシュをリフレッシュ
-        // 運用中のリフレッシュはベストエフォートとし、失敗しても処理を継続
+        //
+        // 運用中のリフレッシュはベストエフォートとし、失敗しても処理を継続する。
         let result = self.refresh_tenant_jwks_cache(tenant_id).await;
         let last_refreshed_at = if result.is_ok() {
             Some(Instant::now())
@@ -663,19 +716,20 @@ impl EntraIdTokenVerifier {
             None
         };
 
-        // リフレッシュを実行
+        // リフレッシュが終了したため、リフレッシュ中でない状態に変更した後、他のスレッドにリフレッシュが完了したこと通知
         let mut states = self.cache.refresh_states.lock().await;
-
-        // リフレッシュ処理が終了したため、リフレッシュ中でない状態に変更した後、他のスレッドに通知して待機を解除
-        // メソッドの最初の方でテナントのJWK公開鍵キャッシュのリフレッシュ状態の確認、または登録がされているためラップ解除
+        // このメソッドの最初の方でテナントのJWK公開鍵キャッシュのリフレッシュ状態の確認、または登録がされているため、単にアンラップ
         let state = states.get_mut(tenant_id).unwrap();
+        // リフレッシュ状態を解除
         state.refreshing = false;
-        state.notify.notify_waiters();
         // リフレッシュに成功した場合は、最後にリフレッシュした時刻を更新
         if last_refreshed_at.is_some() {
             state.last_refreshed_at = last_refreshed_at;
         }
-        result
+        // 待機しているタスクに通知して、待機状態を解除
+        state.notify.notify_waiters();
+
+        result.map(|_| JwksCacheRefreshResult::Refreshed)
     }
 
     /// JWK公開鍵を最後に確認した時刻が、指定された時間を超えた場合、そのJWK公開鍵をキャッシュから削除する。
@@ -696,7 +750,7 @@ impl EntraIdTokenVerifier {
                 .drain()
                 .filter(|(_, jwk)| now.duration_since(jwk.last_seen_at) < self.cache.ttl)
                 .collect();
-            // テナントのJWK公開鍵がすべて削除されないようにする安全策として、 テナントにTTLを超えていないJWK公開鍵が存在せず、
+            // テナントのJWK公開鍵がすべて削除されないようにする安全策として、テナントにTTLを超えていないJWK公開鍵が存在せず、
             // 現在のキャッシュにそのテナントのJWK公開鍵が存在する場合、last_seen_atが最も新しいJWK公開鍵を1つ残す
             if retained.is_empty()
                 && let Some((kid, jwk)) =
@@ -714,9 +768,11 @@ impl EntraIdTokenVerifier {
     }
 
     /// バックグラウンドで定期的にJWK公開鍵をリフレッシュするタスクを起動する。
-    async fn refresh_jwks_cache_periodically(self: Arc<Self>) -> EntraIdResult<()> {
+    async fn run_refresh_jwks_cache_task_in_background(
+        self: Arc<Self>,
+        shutdown: CancellationToken,
+    ) -> EntraIdResult<()> {
         let mut interval = tokio::time::interval(self.refresh_jwks_interval);
-        let shutdown = self.shutdown.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -728,6 +784,9 @@ impl EntraIdTokenVerifier {
                         tracing::info!("Refresh all tenants JWKs cache");
                         // すべてのテナントについて、キャッシュしているJWK公開鍵をリフレッシュ
                         for tenant_id in self.registry.keys() {
+                            // テナントのJWK公開鍵をリフレッシュ
+                            //
+                            // テナントのJWK公開鍵のリフレッシュに失敗しても無視して、次のテナントのJWK公開鍵のリフレッシュに進む。
                             if let Err(e) = self.maybe_refresh_tenant_jwks_cache(tenant_id).await {
                                 tracing::warn!(tenant_id = %tenant_id, error = %e, "Error refreshing JWKs for tenant");
                             }
@@ -754,19 +813,23 @@ impl EntraIdTokenVerifier {
     ///
     /// * 検証に成功した場合は検証に成功したJWTから取得したクレーム
     pub async fn verify_token(&self, token: &BearerToken) -> EntraIdResult<Claims> {
-        // JWTヘッダーをデコードしてkidを取得
-        // このkidを信用してはならない。あくまでJWK公開鍵を特定するために使用するだけ。
+        // JWTヘッダーをデコード
+        //
+        // このデコード結果はアルゴリズムとkidを取得するためだけに使用する。
+        // JWTは、このメソッドの後の方で検証するため、検証が成功するまで他の用途で使用してはならない。
         let header =
             decode_header(token.0.expose_secret()).map_err(EntraIdError::TokenHeaderDecodeError)?;
-        let kid = header.kid.ok_or_else(|| {
-            EntraIdError::TokenHeaderMissingKid("JWT header missing 'kid'".into())
-        })?;
 
+        // アルゴリズムを検証
+        //
         // Entra IDはRS256以外のRSA署名アルゴリズムをサポートしていない。
-        // ヘッダに記録されているアルゴリズムは信用してはならないため検証する。
         if header.alg != Algorithm::RS256 {
             return Err(EntraIdError::UnsupportedTokenAlgorithm(header.alg));
         }
+        // kidを取得できるか確認
+        let kid = header.kid.ok_or_else(|| {
+            EntraIdError::TokenHeaderMissingKid("JWT header missing 'kid'".into())
+        })?;
 
         // JWTペイロードをデコードしてiss、audおよびtidを取得
         let unverified_claims = extract_payload(token)?;
@@ -796,7 +859,7 @@ impl EntraIdTokenVerifier {
 
         // デコードと検証
         let token_data = decode::<Claims>(token.0.expose_secret(), &decoding_key, &validation)
-            .map_err(|_| EntraIdError::VerifyTokenError)?;
+            .map_err(EntraIdError::VerifyTokenError)?;
         Ok(token_data.claims)
     }
 }
@@ -814,12 +877,6 @@ pub struct EntraIdTokenVerifierBuilder {
     shutdown: Option<CancellationToken>,
 }
 
-impl From<&str> for EntraIdError {
-    fn from(s: &str) -> Self {
-        EntraIdError::InitializeError(s.into())
-    }
-}
-
 impl EntraIdTokenVerifierBuilder {
     /// テナントを設定する。
     ///
@@ -832,7 +889,9 @@ impl EntraIdTokenVerifierBuilder {
     /// * 自身のインスタンス
     pub fn tenants(mut self, tenants: Vec<Tenant>) -> EntraIdResult<Self> {
         if tenants.is_empty() {
-            return Err("Tenants list cannot be empty".into());
+            return Err(EntraIdError::Initialize(
+                "Tenants list cannot be empty".into(),
+            ));
         }
         self.tenants = Some(tenants);
         Ok(self)
@@ -849,7 +908,9 @@ impl EntraIdTokenVerifierBuilder {
     /// * 自身のインスタンス
     pub fn jwk_cache_ttl(mut self, ttl: Duration) -> EntraIdResult<Self> {
         if ttl.is_zero() {
-            return Err("JWK cache TTL must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "JWK cache TTL must be greater than zero".into(),
+            ));
         }
         self.jwk_cache_ttl = Some(ttl);
         Ok(self)
@@ -866,7 +927,18 @@ impl EntraIdTokenVerifierBuilder {
     /// * 自身のインスタンス
     pub fn refresh_jwks_interval(mut self, interval: Duration) -> EntraIdResult<Self> {
         if interval.is_zero() {
-            return Err("Refresh JWKs interval must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "Refresh JWKs interval must be greater than zero".into(),
+            ));
+        }
+        if interval < MIN_BACKGROUND_JWKS_REFRESH_INTERVAL {
+            return Err(EntraIdError::Initialize(
+                format!(
+                    "Refresh JWKs interval must be at least {:?}",
+                    MIN_BACKGROUND_JWKS_REFRESH_INTERVAL
+                )
+                .into(),
+            ));
         }
         self.refresh_jwks_interval = Some(interval);
         Ok(self)
@@ -883,7 +955,9 @@ impl EntraIdTokenVerifierBuilder {
     /// * 自身のインスタンス
     pub fn refresh_tenant_jwks_interval(mut self, interval: Duration) -> EntraIdResult<Self> {
         if interval.is_zero() {
-            return Err("Refresh tenant JWKs interval must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "Refresh tenant JWKs interval must be greater than zero".into(),
+            ));
         }
         self.refresh_tenant_jwks_interval = Some(interval);
         Ok(self)
@@ -900,7 +974,9 @@ impl EntraIdTokenVerifierBuilder {
     /// * 自身のインスタンス
     pub fn entra_id_connection_timeout(mut self, timeout: Duration) -> EntraIdResult<Self> {
         if timeout.is_zero() {
-            return Err("Entra ID connection timeout must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "Entra ID connection timeout must be greater than zero".into(),
+            ));
         }
         self.entra_id_connection_timeout = Some(timeout);
         Ok(self)
@@ -917,7 +993,9 @@ impl EntraIdTokenVerifierBuilder {
     /// * 自身のインスタンス
     pub fn entra_id_timeout(mut self, timeout: Duration) -> EntraIdResult<Self> {
         if timeout.is_zero() {
-            return Err("Entra ID timeout must be greater than zero".into());
+            return Err(EntraIdError::Initialize(
+                "Entra ID timeout must be greater than zero".into(),
+            ));
         }
         self.entra_id_timeout = Some(timeout);
         Ok(self)
@@ -959,28 +1037,28 @@ impl EntraIdTokenVerifierBuilder {
     pub async fn build(self) -> EntraIdResult<Arc<EntraIdTokenVerifier>> {
         let tenants = self
             .tenants
-            .ok_or_else(|| EntraIdError::InitializeError("Tenants list is not set".into()))?;
+            .ok_or_else(|| EntraIdError::Initialize("Tenants list is not set".into()))?;
         let jwk_cache_ttl = self
             .jwk_cache_ttl
-            .ok_or_else(|| EntraIdError::InitializeError("JWK cache TTL is not set".into()))?;
-        let refresh_jwks_interval = self.refresh_jwks_interval.ok_or_else(|| {
-            EntraIdError::InitializeError("Refresh JWKs interval is not set".into())
-        })?;
+            .ok_or_else(|| EntraIdError::Initialize("JWK cache TTL is not set".into()))?;
+        let refresh_jwks_interval = self
+            .refresh_jwks_interval
+            .ok_or_else(|| EntraIdError::Initialize("Refresh JWKs interval is not set".into()))?;
         let refresh_tenant_jwks_interval = self.refresh_tenant_jwks_interval.ok_or_else(|| {
-            EntraIdError::InitializeError("Refresh tenant JWKs interval is not set".into())
+            EntraIdError::Initialize("Refresh tenant JWKs interval is not set".into())
         })?;
         let entra_id_connection_timeout = self.entra_id_connection_timeout.ok_or_else(|| {
-            EntraIdError::InitializeError("Entra ID connection timeout is not set".into())
+            EntraIdError::Initialize("Entra ID connection timeout is not set".into())
         })?;
         let entra_id_timeout = self
             .entra_id_timeout
-            .ok_or_else(|| EntraIdError::InitializeError("Entra ID timeout is not set".into()))?;
+            .ok_or_else(|| EntraIdError::Initialize("Entra ID timeout is not set".into()))?;
         let retry_config = self
             .retry_config
-            .ok_or_else(|| EntraIdError::InitializeError("Retry config is not set".into()))?;
+            .ok_or_else(|| EntraIdError::Initialize("Retry config is not set".into()))?;
         let shutdown = self
             .shutdown
-            .ok_or_else(|| EntraIdError::InitializeError("Shutdown token is not set".into()))?;
+            .ok_or_else(|| EntraIdError::Initialize("Shutdown token is not set".into()))?;
         EntraIdTokenVerifier::new(
             tenants,
             jwk_cache_ttl,
