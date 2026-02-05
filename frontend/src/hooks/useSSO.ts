@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   InteractionRequiredAuthError,
   InteractionStatus,
+  type AccountInfo,
+  type IPublicClientApplication,
 } from '@azure/msal-browser';
 import { useMsal } from '@azure/msal-react';
 import { graphLoginRequest } from '../authConfig.ts';
@@ -24,72 +26,25 @@ export const useSSO = () => {
   useEffect(() => {
     // このコンポーネントがアンマウントされた後に、状態を更新しないようにするためのフラグ
     // このコンポーネントがアンマウントされた後、cancelledはtrue
-    let cancelled = false;
-
-    const checkSSO = async () => {
-      // MSALが何かしている間は待機
-      if (inProgress !== InteractionStatus.None) return;
-      // ログインしていない場合はSSOチェックを終了
-      if (!isAuthenticated) return;
-
-      try {
-        // ログインしているアカウントのトークンを取得
-        await acquireToken(account);
-        console.log('SSO Silent Login Succeeded');
-      } catch (err) {
-        // トークンを取得する際に例外が発生するのは、ログインしていない場合であり、これは無視して良いため
-        // ログに記録するだけに留める
-        if (err instanceof InteractionRequiredAuthError) {
-          console.log('SSO Silent Login Failed - Interaction Required: ', err);
-        } else {
-          console.log('SSO Silent Login Failed: ', err);
-        }
-      }
-    };
-
-    checkSSO().finally(() => {
+    const cancelled = false;
+    checkSSO(inProgress, isAuthenticated, acquireToken, account).finally(() => {
       if (!cancelled) {
         setIsCheckingSSO(false);
       }
     });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [instance, isAuthenticated, inProgress, account, acquireToken]);
+  }, [instance, isAuthenticated, inProgress, acquireToken, account]);
 
   // ログイン
-  const login = useCallback(async () => {
-    setIsLoginInProgress(true);
-    try {
-      // リダイレクトによりログインページを表示
-      await instance.loginRedirect({
-        redirectStartPage: window.location.href,
-        ...graphLoginRequest,
-      });
-    } catch (err) {
-      console.error('Login Failed', err);
-      setError(err instanceof Error ? err.message : 'ログインに失敗しました');
-    } finally {
-      setIsLoginInProgress(false);
-    }
-  }, [instance]);
+  const login = useCallback(
+    () => loginFunc(instance, setIsLoginInProgress, setError),
+    [instance],
+  );
 
   // ログアウト
-  const logout = useCallback(async () => {
-    setIsLogoutInProgress(true);
-    try {
-      // リダイレクトによりログアウトページを表示
-      await instance.logoutRedirect({
-        account: instance.getActiveAccount(),
-      });
-    } catch (err) {
-      console.error('Logout Failed', err);
-      setError(err instanceof Error ? err.message : 'ログアウトに失敗しました');
-    } finally {
-      setIsLogoutInProgress(false);
-    }
-  }, [instance]);
+  const logout = useCallback(
+    async () => logoutFunc(instance, setIsLogoutInProgress, setError),
+    [instance],
+  );
 
   return {
     isCheckingSSO,
@@ -100,4 +55,69 @@ export const useSSO = () => {
     isLogoutInProgress,
     error,
   };
+};
+
+const checkSSO = async (
+  inProgress: InteractionStatus,
+  isAuthenticated: boolean,
+  acquireToken: (account: AccountInfo) => Promise<string>,
+  account: AccountInfo,
+) => {
+  // MSALが何かしている間は待機
+  if (inProgress !== InteractionStatus.None) return;
+  // ログインしていない場合はSSOチェックを終了
+  if (!isAuthenticated) return;
+
+  try {
+    // ログインしているアカウントのトークンを取得
+    await acquireToken(account);
+    console.log('SSO Silent Login Succeeded');
+  } catch (err) {
+    // トークンを取得する際に例外が発生するのは、ログインしていない場合であり、これは無視して良いため
+    // ログに記録するだけに留める
+    if (err instanceof InteractionRequiredAuthError) {
+      console.log('SSO Silent Login Failed - Interaction Required: ', err);
+    } else {
+      console.log('SSO Silent Login Failed: ', err);
+    }
+  }
+};
+
+const loginFunc = async (
+  instance: IPublicClientApplication,
+  setIsLoginInProgress: React.Dispatch<React.SetStateAction<boolean>>,
+  setError: React.Dispatch<React.SetStateAction<string | null>>,
+) => {
+  setIsLoginInProgress(true);
+  try {
+    // リダイレクトによりログインページを表示
+    await instance.loginRedirect({
+      redirectStartPage: window.location.href,
+      ...graphLoginRequest,
+    });
+  } catch (err) {
+    console.error('Login Failed', err);
+    setError(err instanceof Error ? err.message : 'ログインに失敗しました');
+  } finally {
+    setIsLoginInProgress(false);
+  }
+};
+
+const logoutFunc = async (
+  instance: IPublicClientApplication,
+  setIsLogoutInProgress: React.Dispatch<React.SetStateAction<boolean>>,
+  setError: React.Dispatch<React.SetStateAction<string | null>>,
+) => {
+  setIsLogoutInProgress(true);
+  try {
+    // リダイレクトによりログアウトページを表示
+    await instance.logoutRedirect({
+      account: instance.getActiveAccount(),
+    });
+  } catch (err) {
+    console.error('Logout Failed', err);
+    setError(err instanceof Error ? err.message : 'ログアウトに失敗しました');
+  } finally {
+    setIsLogoutInProgress(false);
+  }
 };
