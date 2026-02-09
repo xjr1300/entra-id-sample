@@ -103,16 +103,27 @@ pub enum EntraIdError {
 pub struct Claims {
     /// 購読者（audience）
     pub aud: String,
+
     /// 発行者（issuer）
     pub iss: String,
+
     /// 有効期限（expiration）
     pub exp: usize,
+
+    /// スコープ
+    ///
+    /// <https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference>
+    /// String, a space separated list of scopes
+    pub scp: Option<String>,
+
+    /// ロール
+    ///
+    /// <https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference>
+    /// Array of strings, a list of permissions
+    pub roles: Option<Vec<String>>,
+
     /// オブジェクトID
     pub oid: String,
-    /// サブジェクト
-    pub sub: String,
-    /// ロール
-    pub roles: Option<Vec<String>>,
 }
 
 /// テナントID
@@ -1162,4 +1173,17 @@ pub fn extract_issuer_from_iss(iss: &str) -> EntraIdResult<TenantId> {
         )),
         tenant_id => Ok(TenantId(tenant_id.to_string())),
     }
+}
+
+/// スコープ文字列を分割してイテレータを返す。
+///
+/// # Arguments
+///
+/// * `scopes` - スコープ文字列
+///
+/// # Returns
+///
+/// * スコープのイテレータ
+pub fn split_scopes(scopes: &str) -> impl Iterator<Item = &str> {
+    scopes.split_whitespace()
 }

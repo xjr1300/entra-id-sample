@@ -9,6 +9,9 @@ use self::me::me;
 
 use crate::state::AppState;
 
+/// クライアントがバックエンドにアクセスするために必要なスコープ
+pub const BACKEND_ACCESS_TOKEN_SCOPE: &str = "access_as_user";
+
 /// ルートを作成する。
 ///
 /// # Arguments

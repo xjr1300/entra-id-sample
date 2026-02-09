@@ -1,7 +1,7 @@
 use crate::{
     common::{AppResult, RequestError},
-    entra_id::extract_issuer_from_iss,
-    handlers::extractors::AuthClaims,
+    entra_id::{extract_issuer_from_iss, split_scopes},
+    handlers::{BACKEND_ACCESS_TOKEN_SCOPE, extractors::AuthClaims},
     state::AppState,
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
@@ -33,6 +33,29 @@ pub async fn me(
         access_token,
     }: AuthClaims,
 ) -> AppResult<impl IntoResponse> {
+    // スコープを確認
+    match claims.scp {
+        Some(ref scopes) => {
+            if !split_scopes(scopes).any(|scp| scp == BACKEND_ACCESS_TOKEN_SCOPE) {
+                tracing::warn!(
+                    "{} scopes not found present in token",
+                    BACKEND_ACCESS_TOKEN_SCOPE
+                );
+                return Err(RequestError {
+                    code: StatusCode::FORBIDDEN,
+                    message: "Required scope not found in token".to_string(),
+                });
+            }
+        }
+        None => {
+            tracing::warn!("No scopes present in token");
+            return Err(RequestError {
+                code: StatusCode::FORBIDDEN,
+                message: "Required scope not found in token".to_string(),
+            });
+        }
+    }
+
     // テナントIDを取得
     let tenant_id = extract_issuer_from_iss(&claims.iss).map_err(|e| {
         tracing::error!(error = %e, "Failed to extract tenant ID from iss");
