@@ -1,6 +1,6 @@
 # Microsoft Entraの説明とフロントエンドとバックエンドの実装サンプル
 
-このリポジトリは、Microsoft Entra（旧称 Azure Active Directory、以降、Entra ID）を使用した認証および認可の基本的な概念と、フロントエンド（Web アプリケーション: React + MSAL.js）およびバックエンド（Web API サーバー: Rust + axum）での実装サンプルを提供します。
+[このリポジトリ](https://github.com/xjr1300/entra-id-sample)は、Microsoft Entra（旧称 Azure Active Directory、以降、Entra ID）を使用した認証および認可の基本的な概念と、フロントエンド（Web アプリケーション: React + MSAL.js）およびバックエンド（Web API サーバー: Rust + axum）での実装サンプルを提供します。
 
 フロントエンドは、次の機能を実装しています。
 
@@ -21,6 +21,8 @@
 このドキュメントでは、OAuth 2.0、OpenID Connect（以降、OIDC）およびEntra IDについて説明します。
 
 また、上記フロントエンドおよびバックエンドを動作させるために必要となる、具体的なEntra IDの設定手順についても説明します。
+
+なお、[フロントエンド](./frontend/README.md)と[バックエンド](./backend/README.md)の説明は、それぞれのディレクトリ内にあるREADME.mdを参照してください。
 
 ## OAuth 2.0とOpenID Connect（OIDC）の概要
 
