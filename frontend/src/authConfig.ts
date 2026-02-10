@@ -36,6 +36,6 @@ export const loginRequest: SilentRequest = {
     'User.Read',
 
     // バックエンドAPIをユーザー権限（access_as_user）で呼び出すために必要なスコープ
-    `${import.meta.env.VITE_BACKEND_SCOPE}`,
+    import.meta.env.VITE_BACKEND_SCOPE,
   ],
 };

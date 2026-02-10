@@ -24,6 +24,10 @@
 
 なお、[フロントエンド](./frontend/README.md)と[バックエンド](./backend/README.md)の説明は、それぞれのディレクトリ内にあるREADME.mdを参照してください。
 
+フロントエンドの実装は、<https://github.com/xjr1300/entra-id-sample/tree/main/frontend>で確認できます。
+
+バックエンドの実装は、<https://github.com/xjr1300/entra-id-sample/tree/main/backend>で確認できます。
+
 ## OAuth 2.0とOpenID Connect（OIDC）の概要
 
 この章では、Entra IDを理解するための前提知識として、OAuth 2.0およびOIDCの基本的な概念を説明します。
