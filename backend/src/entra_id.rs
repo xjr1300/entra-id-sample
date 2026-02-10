@@ -97,6 +97,19 @@ pub enum EntraIdError {
     InvalidIssuerFormat(String),
 }
 
+/// クライアントID
+#[derive(Clone, Deserialize)]
+pub struct ClientId(pub String);
+
+/// クライアント資格情報
+#[derive(Clone, Deserialize)]
+pub struct ClientCredentials {
+    /// クライアントID
+    pub client_id: ClientId,
+
+    /// クライアントシークレット
+    pub client_secret: SecretString,
+}
 /// JWTのクレーム
 #[allow(dead_code)]
 #[derive(Clone, Deserialize)]
@@ -141,10 +154,13 @@ impl std::fmt::Display for TenantId {
 pub struct Tenant {
     /// テナントID
     pub id: TenantId,
+
     /// JWK公開鍵セットを取得するURI
     pub uri: Url,
+
     /// トークンの発行者
     pub issuer: String,
+
     /// トークンの購読者
     pub audience: String,
 }
@@ -162,14 +178,19 @@ type TenantRegistry = HashMap<TenantId, Tenant>;
 struct Jwk {
     /// JWK公開鍵を識別するID
     pub kid: String,
+
     /// JWK公開鍵の種類（RSAなど）
     pub kty: String,
+
     /// RSA公開鍵のモジュラス
     pub n: String,
+
     /// RSA公開鍵の指数
     pub e: String,
+
     /// JWK公開鍵のアルゴリズム（RS256など）
     pub alg: Option<String>,
+
     /// JWK公開鍵の用途（sig（署名用）, enc（暗号化用）など）
     #[serde(rename = "use")]
     pub use_: Option<String>,
@@ -180,6 +201,7 @@ struct Jwk {
 struct CachedJwk {
     /// JWK公開鍵
     jwk: Jwk,
+
     /// JWK公開鍵を最後に確認した時刻
     last_seen_at: Instant,
 }
@@ -228,12 +250,16 @@ struct JwksProvider {
 pub struct RetryConfig {
     /// 最大試行回数
     max_attempts: u32,
+
     /// 最初の待機時間
     initial_wait: Duration,
+
     /// 待機時間の増加乗数
     backoff_multiplier: f64,
+
     /// 最大待機時間
     max_wait: Duration,
+
     /// ジッター分布（待機時間に乗算されるランダム係数）
     jitter_dist: Uniform<f64>,
 }
@@ -473,12 +499,16 @@ enum JwksCacheRefreshResult {
 pub struct EntraIdTokenVerifier {
     /// テナントレジストリ
     registry: TenantRegistry,
+
     /// JWKsプロバイダ
     provider: JwksProvider,
+
     /// JWK公開鍵キャッシュ
     cache: JwksCache,
+
     /// バックグラウンドで定期的に、すべてのテナントのキャッシュされたJWK公開鍵をリフレッシュする間隔
     refresh_jwks_interval: Duration,
+
     /// テナントのキャッシュされたJWK公開鍵がリフレッシュされてから、次にリフレッシュされるまでの最小時間
     refresh_tenant_jwks_interval: Duration,
 }
@@ -1127,8 +1157,13 @@ fn extract_payload(token: &BearerToken) -> EntraIdResult<UnverifiedClaims> {
 /// 発行者（issuer）に基づいてテナントを識別する列挙型
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IssuerTenant {
+    /// 特定のテナント
     Tenant(TenantId),
+
+    /// 組織
     Organizations,
+
+    /// 共通
     Common,
 }
 
@@ -1173,17 +1208,4 @@ pub fn extract_issuer_from_iss(iss: &str) -> EntraIdResult<TenantId> {
         )),
         tenant_id => Ok(TenantId(tenant_id.to_string())),
     }
-}
-
-/// スコープ文字列を分割してイテレータを返す。
-///
-/// # Arguments
-///
-/// * `scopes` - スコープ文字列
-///
-/// # Returns
-///
-/// * スコープのイテレータ
-pub fn split_scopes(scopes: &str) -> impl Iterator<Item = &str> {
-    scopes.split_whitespace()
 }

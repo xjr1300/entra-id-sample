@@ -59,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState {
         token_verifier,
         client_credentials,
+        http_client: reqwest::Client::new(),
     };
     let x_request_id = HeaderName::from_static("x-request-id");
     let router = create_routes()

@@ -1,24 +1,33 @@
 use config::Config;
-use secrecy::SecretString;
 use serde::Deserialize;
 
-use crate::entra_id::Tenant;
+use crate::entra_id::{ClientCredentials, Tenant};
 
 type ConfigResult<T> = Result<T, ConfigError>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
+    /// 設定ファイルの読み込みエラー
     #[error("{0}")]
     LoadError(config::ConfigError),
+
+    /// 設定ファイルのデシリアライズエラー
     #[error("{0}")]
     DeserializeError(config::ConfigError),
 }
 
 #[derive(Deserialize)]
 pub struct AppConfig {
+    /// ログレベル
     pub log_level: String,
+
+    /// Webサーバー設定
     pub web: WebConfig,
+
+    /// Entra ID設定
     pub entra_id: EntraIdConfig,
+
+    /// クライアント認証情報
     pub client_credentials: ClientCredentials,
 }
 
@@ -36,6 +45,7 @@ impl AppConfig {
 
 #[derive(Deserialize)]
 pub struct WebConfig {
+    /// バインドするポート番号
     pub port: u16,
 }
 
@@ -80,14 +90,4 @@ pub struct EntraIdConfig {
 
     ///Entra IDのJWKsエンドポイントに再試行リクエストを送信するまでに待機する最大時間（秒）
     pub jwks_request_retry_max_wait: u64,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct ClientId(pub String);
-
-/// クライアント資格情報
-#[derive(Clone, Deserialize)]
-pub struct ClientCredentials {
-    pub client_id: ClientId,
-    pub client_secret: SecretString,
 }

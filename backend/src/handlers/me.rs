@@ -1,29 +1,16 @@
-use crate::{
-    common::{AppResult, RequestError},
-    entra_id::{extract_issuer_from_iss, split_scopes},
-    handlers::{BACKEND_ACCESS_TOKEN_SCOPE, extractors::AuthClaims},
-    state::AppState,
-};
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
 
-/// Entra IDのOBOで返されるGraph API用アクセストークンレスポンスの例
-/// ```json
-/// {
-///     "token_type": "Bearer",
-///     "scope": "https://graph.microsoft.com/user.read",
-///     "expires_in": 3269,
-///     "ext_expires_in": 0,
-///     "access_token": "eyJhbGciO...",
-///     "refresh_token": "OAQABAAAA...",
-/// }
-/// ```
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    // 他のフィールドは省略
-}
+use crate::{
+    common::{AppResult, RequestError},
+    entra_id::{BearerToken, extract_issuer_from_iss},
+    handlers::{
+        BACKEND_ACCESS_TOKEN_SCOPE, exists_scope, extractors::AuthClaims,
+        retrieve_graph_access_token,
+    },
+    state::AppState,
+};
 
 #[tracing::instrument(skip(app_state, claims, access_token))]
 pub async fn me(
@@ -34,27 +21,7 @@ pub async fn me(
     }: AuthClaims,
 ) -> AppResult<impl IntoResponse> {
     // スコープを確認
-    match claims.scp {
-        Some(ref scopes) => {
-            if !split_scopes(scopes).any(|scp| scp == BACKEND_ACCESS_TOKEN_SCOPE) {
-                tracing::warn!(
-                    "{} scopes not found present in token",
-                    BACKEND_ACCESS_TOKEN_SCOPE
-                );
-                return Err(RequestError {
-                    code: StatusCode::FORBIDDEN,
-                    message: "Required scope not found in token".to_string(),
-                });
-            }
-        }
-        None => {
-            tracing::warn!("No scopes present in token");
-            return Err(RequestError {
-                code: StatusCode::FORBIDDEN,
-                message: "Required scope not found in token".to_string(),
-            });
-        }
-    }
+    exists_scope(&claims.scp, BACKEND_ACCESS_TOKEN_SCOPE)?;
 
     // テナントIDを取得
     let tenant_id = extract_issuer_from_iss(&claims.iss).map_err(|e| {
@@ -65,79 +32,20 @@ pub async fn me(
         }
     })?;
 
+    // HTTPクライアントをステートから取得
+
+    let client = &app_state.http_client;
     // OBOでGraph APIを呼び出すためのアクセストークンを取得
-    // The user or administrator has not consented to use the application with ID ...
-    // のようなエラーが出た場合、管理者がバックエンドアプリケーションに対して
-    // Graph APIのアクセス許可を付与していない可能性がある。
-    //
-    // また、バックエンドアプリケーションに対して、Graph APIのUser.Readなどのアクセス許可を追加しても、管理者の同意が必要になる。
-    // Entra ID画面でUser.Readの行に緑のチェックマークが付いていることを確認すること。
-    let uri = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        tenant_id.0
-    );
-    let params = [
-        ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
-        ("client_id", &app_state.client_credentials.client_id.0),
-        (
-            "client_secret",
-            app_state.client_credentials.client_secret.expose_secret(),
-        ),
-        ("assertion", access_token.0.expose_secret()),
-        ("scope", "https://graph.microsoft.com/User.Read"),
-        ("requested_token_use", "on_behalf_of"),
-    ];
-    let client = reqwest::Client::new();
-    let response = client.post(&uri).form(&params).send().await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to request Graph API access token");
-        RequestError {
-            code: StatusCode::BAD_GATEWAY,
-            message: format!("Failed to request Graph API access token: {e}"),
-        }
-    })?;
-    if response.status().is_client_error() || response.status().is_server_error() {
-        tracing::error!(status = %response.status(), "Graph API access token request returned error status");
-        let message = response.text().await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to read Graph API access token error body");
-            RequestError {
-                code: StatusCode::BAD_GATEWAY,
-                message: format!("Failed to read Graph API access token error body: {e}"),
-            }
-        })?;
-        tracing::error!(body = %message, "Graph API access token request error body");
-        return Err(RequestError {
-            code: StatusCode::BAD_GATEWAY,
-            message,
-        });
-    };
-    let token_response = response.json::<TokenResponse>().await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to parse Graph API access token response");
-        RequestError {
-            code: StatusCode::BAD_GATEWAY,
-            message: format!("Failed to parse Graph API access token response: {e}"),
-        }
-    })?;
+    let client_id = &app_state.client_credentials.client_id;
+    let client_secret = &app_state.client_credentials.client_secret;
+    let access_token =
+        retrieve_graph_access_token(client, &tenant_id, client_id, client_secret, &access_token)
+            .await?;
 
     // Graph APIの呼び出し
-    let response = client
-        .get("https://graph.microsoft.com/v1.0/me")
-        .bearer_auth(token_response.access_token)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to call Graph API");
-            RequestError {
-                code: StatusCode::BAD_GATEWAY,
-                message: format!("Failed to call Graph API: {e}"),
-            }
-        })?
-        .json::<MeResponse>()
-        .await
-        .map_err(|e| RequestError {
-            code: StatusCode::BAD_GATEWAY,
-            message: format!("Failed to parse Graph API response: {e}"),
-        })?;
+    let response = fetch_graph_me(client, &access_token).await?;
 
+    // レスポンスを返す
     Ok((StatusCode::OK, axum::Json(response)).into_response())
 }
 
@@ -156,4 +64,28 @@ struct MeResponse {
     business_phones: Option<Vec<String>>,
     mobile_phone: Option<String>,
     preferred_language: Option<String>,
+}
+
+async fn fetch_graph_me(
+    client: &reqwest::Client,
+    access_token: &BearerToken,
+) -> AppResult<MeResponse> {
+    client
+        .get("https://graph.microsoft.com/v1.0/me")
+        .bearer_auth(access_token.0.expose_secret())
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to call Graph API");
+            RequestError {
+                code: StatusCode::BAD_GATEWAY,
+                message: format!("Failed to call Graph API: {e}"),
+            }
+        })?
+        .json::<MeResponse>()
+        .await
+        .map_err(|e| RequestError {
+            code: StatusCode::BAD_GATEWAY,
+            message: format!("Failed to parse Graph API response: {e}"),
+        })
 }

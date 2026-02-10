@@ -6,9 +6,13 @@ use serde::Serialize;
 
 pub type AppResult<T> = Result<T, RequestError>;
 
+/// リクエストエラー
 #[derive(Debug)]
 pub struct RequestError {
+    /// HTTPステータスコード
     pub code: StatusCode,
+
+    /// エラーメッセージ
     pub message: String,
 }
 
@@ -28,8 +32,13 @@ impl IntoResponse for RequestError {
 
 #[derive(Serialize)]
 struct RequestErrorRaw {
+    /// HTTPステータスコード
     code: u16,
+
+    /// HTTPエラー名
     error: String,
+
+    /// エラーメッセージ
     message: String,
 }
 
