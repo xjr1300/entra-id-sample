@@ -47,7 +47,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6Ik1...
 ## JSON Web トークン (JWT) とは
 
 JWTは、ドット（`.`）で区切られた3つのパーツから構成されます。
-各パーツはBase64URL形式でエンコードされており、次の形式担っています。
+各パーツはBase64URL形式でエンコードされており、次の形式に従っています。
 
 ```text
 header.payload.signature
