@@ -71,6 +71,7 @@ fn create_protected_api_routes() -> Router<AppState> {
 }
 
 /// Entra IDのOBOで返されるGraph API用アクセストークンレスポンスの例
+///
 /// ```json
 /// {
 ///     "token_type": "Bearer",

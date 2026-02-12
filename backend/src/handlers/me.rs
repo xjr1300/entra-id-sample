@@ -33,7 +33,6 @@ pub async fn me(
     })?;
 
     // HTTPクライアントをステートから取得
-
     let client = &app_state.http_client;
     // OBOでGraph APIを呼び出すためのアクセストークンを取得
     let client_id = &app_state.client_credentials.client_id;
