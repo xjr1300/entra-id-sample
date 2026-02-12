@@ -7,7 +7,7 @@ use crate::{
     entra_id::{BearerToken, extract_issuer_from_iss},
     handlers::{
         BACKEND_ACCESS_TOKEN_SCOPE, exists_scope, extractors::AuthClaims,
-        retrieve_graph_access_token,
+        retrieve_graph_obo_access_token,
     },
     state::AppState,
 };
@@ -37,9 +37,14 @@ pub async fn me(
     // OBOでGraph APIを呼び出すためのアクセストークンを取得
     let client_id = &app_state.client_credentials.client_id;
     let client_secret = &app_state.client_credentials.client_secret;
-    let access_token =
-        retrieve_graph_access_token(client, &tenant_id, client_id, client_secret, &access_token)
-            .await?;
+    let access_token = retrieve_graph_obo_access_token(
+        client,
+        &tenant_id,
+        client_id,
+        client_secret,
+        &access_token,
+    )
+    .await?;
 
     // Graph APIの呼び出し
     let response = fetch_graph_me(client, &access_token).await?;

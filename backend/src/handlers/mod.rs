@@ -111,7 +111,7 @@ struct TokenResponse {
 /// また、バックエンドアプリケーションに対して、Graph APIのUser.Readなどのアクセス許可を追加しても、
 /// 管理者の同意が必要になる。
 /// Entra ID画面でUser.Readの行に緑のチェックマークが付いていることを確認すること。
-pub async fn retrieve_graph_access_token(
+pub async fn retrieve_graph_obo_access_token(
     client: &reqwest::Client,
     tenant_id: &TenantId,
     client_id: &ClientId,
@@ -123,11 +123,19 @@ pub async fn retrieve_graph_access_token(
         tenant_id.0
     );
     let params = [
+        // Bearerトークンを使用したOAuth 2.0のグラントタイプを指定
         ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+        // バックエンドのクライアントIDを指定
         ("client_id", &client_id.0),
+        // バックエンドのクライアントシークレットを指定
         ("client_secret", client_secret.expose_secret()),
+        // フロントエンドから受け取ったユーザーのアクセストークンを指定して、このユーザーの代理として主張
         ("assertion", access_token.0.expose_secret()),
-        ("scope", "https://graph.microsoft.com/User.Read"),
+        // Graph APIに対して、バックエンド用アプリケーションに事前に構成され、
+        // 同意済みの委任されたアクセス許可（APIのアクセス許可）をまとめて要求する。
+        // ただし、OBOフローでは元のアクセストークンが持つ権限の範囲内でのみ発行される。
+        ("scope", "https://graph.microsoft.com/.default"),
+        // このアクセストークンの要求がOBO（On-Behalf-Of）フローであることを指定
         ("requested_token_use", "on_behalf_of"),
     ];
     let response = client.post(&uri).form(&params).send().await.map_err(|e| {
