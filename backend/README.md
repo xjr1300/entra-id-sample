@@ -426,15 +426,23 @@ pub async fn me(
     );
     // OBOフローでGraph APIのアクセストークンを取得するためのパラメーターを設定します。
     let params = [
+        // Bearerトークンを使用したOAuth 2.0のグラントタイプを指定します。
         ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
-        ("client_id", &app_state.client_credentials.client_id.0),   // バックエンドのクライアントIDを指定
+        // バックエンドのクライアントIDを指定します。
+        ("client_id", &app_state.client_credentials.client_id.0),
+        // バックエンドのクライアントシークレットを指定します。
         (
             "client_secret",
-            app_state.client_credentials.client_secret.expose_secret(), // バックエンドのクライアントシークレットを指定
+            app_state.client_credentials.client_secret.expose_secret(),
         ),
-        ("assertion", access_token.0.expose_secret()),  // リクエストで受け取ったアクセストークンを指定
-        ("scope", "https://graph.microsoft.com/User.Read"), // Graphのスコープを指定
-        ("requested_token_use", "on_behalf_of"),      // OBOフローを指定
+        // フロントエンドから受け取ったユーザーのアクセストークンを指定して、このユーザーの代理として主張します。
+        ("assertion", access_token.0.expose_secret()),
+        // Graph APIに対して、バックエンド用アプリケーションに事前に構成され、同意済みの委任されたアクセス許可（APIのアクセス許可）
+        // をまとめて要求します。
+        // ただし、OBOフローでは元のアクセストークンが持つ権限の範囲内でのみ発行されます。
+        ("scope", "https://graph.microsoft.com/.default"),
+        // このアクセストークンの要求がOBO（On-Behalf-Of）フローであることを指定しています。
+        ("requested_token_use", "on_behalf_of"),
     ];
     // HTTPクライアントを作成し、フォーム形式でGraph APIのアクセストークンを取得します。
     let client = reqwest::Client::new();
