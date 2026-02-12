@@ -55,18 +55,19 @@ header.payload.signature
 
 ### JWTのヘッダー（header）
 
-ヘッダーには、JWTのメタデータが含まれます。主に次の情報が定義されます。
+ヘッダーには、JWTのメタデータが含まれます。主に次の情報（クレーム、Claims）が定義されます。
 
 * `typ`: トークンの種類を示します。JWTの場合は通常JWTが指定されます。
-* `alg`: 署名に使用されているアルゴリズムを示します。Entra IDが発行するアクセストークンは、RS256公開鍵暗号方式が使用されます。
+* `alg`: 署名に使用されているアルゴリズムを示します。Entra IDが発行するアクセストークンは、通常、RS256（RSA署名＋SHA-256）が使用されます。
 * `kid`: 署名の検証に使用する公開鍵を識別するためのキーIDです。
 
-バックエンドは、ヘッダーに含まれる`alg`や`kid`をもとに、どの公開鍵で署名を検証すべきかを判断します。
+バックエンドは、ヘッダーに含まれる`alg`や`kid`を基に、どのアルゴリズムで署名されているか、どの公開鍵を使用して署名を検証するべきかを判断する必要があります。
+
+> `typ`は、`typ`クレームであるため、`alg`クレームなどと合わせた全体は**Claims**と呼ばれます。
 
 ### JWTのペイロード（payload）
 
-ペイロードには、アクセストークンの内容を表すクレーム（Claims）が含まれます。
-クレームは、認証や認可の判断に必要な情報です。
+ペイロードには、アクセストークンの内容を表すクレームが含まれます。
 代表的なクレームには次のようなものがあります。
 
 * `iss`: トークンの発行者を示します。Entra IDのテナントを識別するURLが設定されます。
@@ -89,13 +90,24 @@ header.payload.signature
 1. Base64URLエンコードされたヘッダーとペイロードをドットで連結します。
 2. 連結した文字列を、ヘッダーで指定されたアルゴリズムと秘密鍵で署名します。
 
-バックエンドは、Entra IDが公開しているJWK公開鍵を用いて署名を検証します。
+バックエンドは、Entra IDが公開しているJWK（JSON Web Key）公開鍵を用いて署名を検証します。
 署名が正しく検証できた場合、そのJWTはEntra IDによって発行され、かつ内容が改ざんされていないことが保証されます。
+
+```text
+# 署名の概念的なコード
+
+# JWTのヘッダーとペイロードをBase64URLエンコードして、ドットで連結
+m = base64url(header) + "." + base64url(payload)
+# 連結した文字列をSHA-256でハッシュ化
+h = sha_256(m)
+# ハッシュ値を秘密鍵で署名
+s = sign_private_key(h)
+```
 
 ## JWT検証基盤
 
-本リポジトリで実装したJWT検証基盤（`EntraIdTokenVerifier`）は、Entra IDが発行するアクセストークン（JWT）を検証します。
-JWK検証基盤は、マルチテナントを前提とし、JWK公開鍵のキャッシュ、自動リフレッシュ、並行アクセス制御を組み合わせることで、実運用を考慮した設計または実装になっています（にしたつもりです）。
+本リポジトリで実装したJWT検証基盤（EntraIdTokenVerifier）は、Entra IDが発行するアクセストークン（JWT）を検証します。
+本基盤はマルチテナントに対応しており、JWK公開鍵のキャッシュ、定期的なJWK公開鍵の自動リフレッシュ、並行アクセス制御を組み合わせることで、実運用を考慮した設計および実装としています。
 
 `EntraIdTokenVerifier`は、`entra_id`モジュールで実装しています。
 
@@ -106,16 +118,17 @@ JWT検証基盤は、主に次の要素で構成されています。
 * テナントレジストリ
 * JWKsプロバイダ
 * JWK公開鍵キャッシュ
-* バックグラウンドリフレッシュ機構
-* JWT検証
+* JWK公開鍵キャッシュのリフレッシュ制御
+* バックグラウンドリフレッシュ
+* JWT検証インターフェイス
 
 ### テナントレジストリ
 
-テナントレジストリ（`TenantRegistry`）は、テナントID（`TenantId`）をキーとしてテナント情報を保持するハッシュマップです。
+テナントレジストリ（`TenantRegistry`）は、テナントID（`TenantId`）をキーとしてテナント情報を保持するハッシュマップ（`HashMap`、キーと値のペアのコレクション、Pythonの辞書（`dict`）に相当）です。
 各テナントには、次の情報が紐づきます。
 
 * テナントID
-* JWKsエンドポイントのURI
+* JWKsエンドポイントのURI（`Uri`、Uniform Resource Identifierの略、リソースを一意に識別する文字列、URLはURIの一種）
 * トークンの発行者（`iss`クレーム）
 * トークンの購読者（`aud`クレーム）
 
@@ -124,11 +137,11 @@ JWT検証基盤は、主に次の要素で構成されています。
 ### JWKsプロバイダ
 
 JWKsプロバイダ（`JwksProvider`）は、Entra IDが公開しているJWKsエンドポイントからJWK公開鍵セットを取得する責務を持ちます。
-JWKsプロバイダが持つHTTPクライアントには、次の特性があります。
+JWKsプロバイダには、次の機能があります。
 
-* 接続タイムアウトとレスポンスタイムアウトの設定
-* 再試行機構（指数バックオフとジッター付き）
-* タイムアウト、接続エラー、5xxエラー（サーバーエラー）、429エラー（Too Many Requests）のみを再試行対象とする判定
+* Entra IDへの接続タイムアウトとレスポンスタイムアウトの設定
+* Entra IDへのリクエストが失敗したときの再試行機構（指数バックオフとジッター付き）
+  * タイムアウト、接続エラー、5xxエラー（サーバーエラー）、429エラー（Too Many Requests）のみを再試行
 
 これにより、一時的なネットワーク障害やEntra IDからのレスポンスの遅延などに対して耐性を持たせています。
 
@@ -145,17 +158,17 @@ wait = initial * (multiplier ^ (attempt -1)) * jitter
 
 上記式のそれぞれのパラメーターは次の通りです。
 
-`wait`: 待機時間（秒単位）
-`initial`: 初期遅延時間（秒単位）
-`multiplier`: 指数バックオフの計数
-`attempt`: 現在の試行回数（1から始まる整数）
-`jitter`: ジッター（1.0前後ののランダムな値）
+* `wait`: 待機時間（秒単位）
+* `initial`: 初期遅延時間（秒単位）
+* `multiplier`: 指数バックオフの計数
+* `attempt`: 現在の試行回数（1から始まる整数）
+* `jitter`: ジッター（1.0前後ののランダムな値）
 
-ジッターを生成する範囲は、設定で指定できます。
+ジッターを生成する範囲は、設定で指定します。
 
 例えば、`multiplier`が2.0、`initial`が0.5秒の場合、ジッターを無視した待機時間は次のとおりです。
 
-| 試行回数 (`attempt`) | 待機時間 (`wait`、秒) |
+| 現在の試行回数 (`attempt`) | 待機時間 (`wait`、秒) |
 | --: | --: |
 | 1 | 0.5 |
 | 2 | 1.0 |
@@ -164,6 +177,7 @@ wait = initial * (multiplier ^ (attempt -1)) * jitter
 | 5 | 8.0 |
 
 実際の待機時間は、上記表の値にジッターを乗じた時間になります。
+ジッターは、再度リクエストを試みるときに、同時に複数のクライアントが同じタイミングでリクエストを送信することを防ぐために、再試行するまでに待機する時間をランダム化する目的で使用しています。
 
 なお、非常に長い時間待機することを防ぐために、待機時間の上限を設定できます。
 
@@ -188,7 +202,7 @@ JWK公開鍵はテナントごとにキャッシュされ、`kid`クレームを
 * 現在リフレッシュ中かどうか
 * 他スレッドを待機させるための通知機構
 
-テナントに`kid`クレームで識別される公開鍵が存在しなかった場合、複数のリクエストが同時に同一テナントにリフレッシュを要求しても、次の動作が保証されます。
+アクセストークンを検証する際、当該テナントに`kid`クレームで識別される公開鍵が存在しなかった場合、複数のリクエストが同時に同一テナントにリフレッシュを要求しても、次の動作が保証されます。
 
 * 最後にリフレッシュした時刻から設定された時間経過していない場合は、リフレッシュをスキップ
 * すでに他スレッドがリフレッシュ中の場合は待機し、他のスレッドがリフレッシュを完了するまで待機
@@ -210,6 +224,10 @@ JWK公開鍵はテナントごとにキャッシュされ、`kid`クレームを
 
 これにより、リクエスト処理とは独立して、定期的にJWK公開鍵キャッシュの鮮度を保ちます。
 
+### JWT検証インターフェイス
+
+`EntraIdTokenVerifier`は、`verify_token`メソッドで、JWTを検証する機能を提供しています。
+
 ## クライアントから受け取ったアクセストークンの処理
 
 バックエンドがクライアントから受け取ったアクセストークンは、クライアントがバックエンドにアクセスするために、Entra IDから取得したものです。
@@ -229,24 +247,25 @@ JWK公開鍵はテナントごとにキャッシュされ、`kid`クレームを
 * トークンの有効期限（`exp`）が切れていないこと
 * 必要に応じて、スコープ（`scp`）やロール（`roles`）が要求を満たしていること
 
-署名の検証は、Entra IDが公開しているJWK（JSON Web Key）を用いて行います。
-バックエンドは、Entra IDからJWK公開鍵を取得し、アクセストークンの署名を検証します。
-これにより、トークンが改ざんされておらず、Entra IDによって発行されたものであることを確認できます。
+バックエンドは、Entra IDから取得したJWK公開鍵を使用して、アクセストークンの署名を検証します。
+これにより、第三者によって発行されたアクセストークンでないこと、アクセストークンが改ざんされていないことを確認します。
 
 これらの検証がすべて成功した場合にのみ、バックエンドはアクセストークンを信頼し、保護されたエンドポイントへのリクエストを処理します。
 
 ### アクセストークンの検証処理の実装（スコープ以外の検証）
 
 ```rust
+//
 // jsonwebtokenクレートが提供する機能を使用して、JWTヘッダーをデコードします。
 //
+
 // JWTはまだ検証前であるため、ここで得られたヘッダーの内容を決して信用してはいけません。
 let header =
     decode_header(token.0.expose_secret()).map_err(EntraIdError::TokenHeaderDecodeError)?;
 
 // アルゴリズムを検証します。
 //
-// Entra IDは、現在RS256のみのRSA署名アルゴリズムをサポートしているようです（未確認）。
+// Entra IDは、基本的にRS256を署名アルゴリズムをサポートしているようです（未確認）。
 if header.alg != Algorithm::RS256 {
     return Err(EntraIdError::UnsupportedTokenAlgorithm(header.alg));
 }
@@ -260,6 +279,8 @@ let kid = header.kid.ok_or_else(|| {
 //
 // extract_payload関数は、JWTペイロードをデコードしてクレームを抽出します。
 // ただし、JWTは検証前であるため、ここで得られたクレームの内容を決して信用してはいけません。
+//
+// ここでは、構造する処理のために、issクレームとkidクレームを抽出することを目的としています。
 let unverified_claims = extract_payload(token)?;
 
 // JWTのペイロード部分をデコードして発行者を特定します。
@@ -344,11 +365,12 @@ pub async fn me(
     }
 
     //
-    // ハンドラの本体処理をここに記述しています。
+    // ハンドラの本体処理をここに記述します。
     //
 
     // レスポンスを返す
     Ok((StatusCode::OK, axum::Json(response)).into_response())
+}
 ```
 
 ## OBOによるGraph APIの呼び出し
@@ -356,14 +378,12 @@ pub async fn me(
 `me`ハンドラは、Entra IDで認証されたユーザーのアクセストークンを受け取り、アクセストークンを検証した後、On-Behalf-Of（OBO）フローを用いてGraph APIを呼び出します。
 これにより、フロントエンドで取得したユーザーのアクセストークンをバックエンドが引き継ぎ、そのユーザーの代理としてGraph APIを呼び出します。
 
-なお、関数の引数である`AuthClaims`は、アクセストークンの検証を行い、検証に成功した場合にクレーム情報とアクセストークンを含む`axum`で実装可能なエクストラクタ（抽出器）です。
+なお、関数の引数である`AuthClaims`は、アクセストークンの検証を行い、検証に成功した場合にクレームとアクセストークンを提供する`axum`で実装可能なエクストラクタ（抽出器）です。
 
 `axum`におけるエクストラクタは、リクエストから特定の情報を抽出するための仕組みです。
 
-`AuthClaims`エクストラクタは、アクセストークンの検証を行い、検証に成功した場合にクレーム情報とアクセストークンを提供します。
-検証に失敗した場合は、401 Unauthorizedエラーを返すため、`me`ハンドラ関数本体は実行されません。
-
-`AuthClaims`エクストラクタにより、正当なアクセストークンを持つユーザーのみが`me`ハンドラにアクセスできるように、エンドポイントを保護します。
+`AuthClaims`エクストラクが検証に失敗した場合、リクエストハンドラは即座に`401 Unauthorized`エラーを返すため、`me`ハンドラ関数本体は実行されません。
+これにより、正当なアクセストークンを持つユーザーのみが`me`ハンドラにアクセスできるように、エンドポイントを保護します。
 
 ```rust
 #[tracing::instrument(skip(app_state, claims, access_token))]
@@ -372,7 +392,7 @@ pub async fn me(
     AuthClaims {
         claims,
         access_token,
-    }: AuthClaims,
+    }: AuthClaims,   // AuthClaimsエクストラクタ
 ) -> AppResult<impl IntoResponse> {
     //
     // 前に示したスコープの検証処理
@@ -404,6 +424,7 @@ pub async fn me(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
         tenant_id.0
     );
+    // OBOフローでGraph APIのアクセストークンを取得するためのパラメーターを設定します。
     let params = [
         ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
         ("client_id", &app_state.client_credentials.client_id.0),   // バックエンドのクライアントIDを指定
@@ -415,6 +436,7 @@ pub async fn me(
         ("scope", "https://graph.microsoft.com/User.Read"), // Graphのスコープを指定
         ("requested_token_use", "on_behalf_of"),      // OBOフローを指定
     ];
+    // HTTPクライアントを作成し、フォーム形式でGraph APIのアクセストークンを取得します。
     let client = reqwest::Client::new();
     let response = client.post(&uri).form(&params).send().await.map_err(|e| {
         tracing::error!(error = %e, "Failed to request Graph API access token");
@@ -423,23 +445,29 @@ pub async fn me(
             message: format!("Failed to request Graph API access token: {e}"),
         }
     })?;
+    // レスポンスのステータスコードがエラーの場合、エラーメッセージをログに記録して、エラーを返します。
     if response.status().is_client_error() || response.status().is_server_error() {
         tracing::error!(status = %response.status(), "Graph API access token request returned error status");
+        // レスポンスボディを読み取ります。
         let message = response.text().await.map_err(|e| {
+            // レスポンスボディが得られない場合は、ログに記録し、エラーを返します。
             tracing::error!(error = %e, "Failed to read Graph API access token error body");
             RequestError {
                 code: StatusCode::BAD_GATEWAY,
                 message: format!("Failed to read Graph API access token error body: {e}"),
             }
         })?;
+        // レスポンスボディが得られた場合は、内容をログに記録し、エラーを返します。
         tracing::error!(body = %message, "Graph API access token request error body");
         return Err(RequestError {
             code: StatusCode::BAD_GATEWAY,
             message,
         });
     };
-    // アクセストークン取得レスポンスを解析して、アクセストークンを取得します。
+
+    // レスポンスを解析して、アクセストークンを取得します。
     let token_response = response.json::<TokenResponse>().await.map_err(|e| {
+        // レスポンスの解析に失敗した場合は、ログに記録し、エラーを返します。
         tracing::error!(error = %e, "Failed to parse Graph API access token response");
         RequestError {
             code: StatusCode::BAD_GATEWAY,
@@ -454,6 +482,7 @@ pub async fn me(
         .send()
         .await
         .map_err(|e| {
+            // Graph APIの呼び出しに失敗した場合は、ログに記録し、エラーを返します。
             tracing::error!(error = %e, "Failed to call Graph API");
             RequestError {
                 code: StatusCode::BAD_GATEWAY,
@@ -463,10 +492,12 @@ pub async fn me(
         .json::<MeResponse>()
         .await
         .map_err(|e| RequestError {
+            // Graph APIのレスポンスの解析に失敗した場合は、ログに記録し、エラーを返します。
             code: StatusCode::BAD_GATEWAY,
             message: format!("Failed to parse Graph API response: {e}"),
         })?;
 
+    // 処理が成功したため、200 OKで、Graph APIのレスポンスをそのまま返します。
     Ok((StatusCode::OK, axum::Json(response)).into_response())
 }
 ```
