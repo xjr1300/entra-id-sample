@@ -12,6 +12,7 @@ export interface Profile {
   businessPhones?: string[] | null;
   mobilePhone?: string | null;
   preferredLanguage?: string | null;
+  employeeId?: string | null;
 }
 
 // Profile型ガード
@@ -52,6 +53,8 @@ export const isProfile = (obj: unknown): obj is Profile => {
     instance.preferredLanguage != null &&
     typeof instance.preferredLanguage !== 'string'
   )
+    return false;
+  if (instance.employeeId != null && typeof instance.employeeId !== 'string')
     return false;
   return true;
 };

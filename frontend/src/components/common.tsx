@@ -23,7 +23,13 @@ const Item = ({
   </p>
 );
 
-export const Profile = ({ profile }: { profile: ProfileType | null }) => (
+export const Profile = ({
+  profile,
+  hasEmployeeId,
+}: {
+  profile: ProfileType | null;
+  hasEmployeeId: boolean;
+}) => (
   <div>
     <Item label="ID" value={profile?.id} />
     <Item label="User Principal Name" value={profile?.userPrincipalName} />
@@ -40,5 +46,6 @@ export const Profile = ({ profile }: { profile: ProfileType | null }) => (
     />
     <Item label="Mobile Phone" value={profile?.mobilePhone} />
     <Item label="Preferred Language" value={profile?.preferredLanguage} />
+    {hasEmployeeId && <Item label="Employee ID" value={profile?.employeeId} />}
   </div>
 );

@@ -68,14 +68,34 @@ struct MeResponse {
     business_phones: Option<Vec<String>>,
     mobile_phone: Option<String>,
     preferred_language: Option<String>,
+    employee_id: Option<String>,
 }
+
+const GRAPH_ME_PROPERTIES: &[&str] = &[
+    "id",
+    "userPrincipalName",
+    "surname",
+    "givenName",
+    "displayName",
+    "mail",
+    "jobTitle",
+    "department",
+    "officeLocation",
+    "businessPhones",
+    "mobilePhone",
+    "preferredLanguage",
+    "employeeId",
+];
 
 async fn fetch_graph_me(
     client: &reqwest::Client,
     access_token: &BearerToken,
 ) -> AppResult<MeResponse> {
     client
-        .get("https://graph.microsoft.com/v1.0/me")
+        .get(format!(
+            "https://graph.microsoft.com/v1.0/me?$select={}",
+            GRAPH_ME_PROPERTIES.join(",")
+        ))
         .bearer_auth(access_token.0.expose_secret())
         .send()
         .await

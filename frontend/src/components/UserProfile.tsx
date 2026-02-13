@@ -10,7 +10,7 @@ export const UserProfile = () => {
       <Loading isLoading={isLoading} />
       <Error message={error} />
       <NoData isExists={!!userProfile} />
-      {userProfile && <Profile profile={userProfile} />}
+      {userProfile && <Profile profile={userProfile} hasEmployeeId={false} />}
     </div>
   );
 };
